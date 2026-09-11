@@ -62,6 +62,20 @@ def fetch_messages(api_key: str, params: dict[str, str | int]) -> list[dict]:
         raise JournalError("SMTP.bz вернул некорректный ответ.") from None
 
 
+def fetch_message_page(api_key: str, params: dict[str, str | int]) -> list[dict]:
+    """Load one page in bounded batches, preserving the provider's journal order."""
+    limit = int(params.get("limit", 100))
+    offset = int(params.get("offset", 0))
+    rows: list[dict] = []
+    while len(rows) < limit:
+        batch_size = min(100, limit - len(rows))
+        batch = fetch_messages(api_key, {**params, "limit": batch_size, "offset": offset + len(rows)})
+        rows.extend(batch[:batch_size])
+        if len(batch) < batch_size:
+            break
+    return rows
+
+
 def journal_table(rows: list[dict]) -> tuple[list[str], list[list[str]]]:
     columns = list(dict.fromkeys(str(key) for row in rows for key in row))
     values = []

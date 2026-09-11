@@ -21,6 +21,10 @@
       </select></label>
       <label>Дата от<input type="date" name="start_date" value="{{ start_date }}"></label>
       <label>Дата до<input type="date" name="end_date" value="{{ end_date }}"></label>
+      <label>Записей на странице
+        <input type="number" name="limit" min="1" max="500" required value="{{ limit }}">
+        <span class="hint">По умолчанию — 100 последних отправок. Можно показать до 500 записей.</span>
+      </label>
     </div>
     <div class="buttons"><button type="submit">Показать</button><a class="button" href="/admin/logs">Сбросить</a></div>
   </form>
@@ -28,6 +32,7 @@
 {% if error %}<p class="error" role="alert">{{ error }}</p>
 {% else %}
 <section class="panel">
+  {% include "log_pagination.html" %}
   {% if cells %}
   <p class="hint">Записи {{ offset + 1 }}–{{ offset + cells|length }}. Названия полей и значения приведены из API SMTP.bz.</p>
   <div class="table-scroll"><table class="journal">
@@ -35,10 +40,7 @@
     <tbody>{% for row in cells %}<tr>{% for cell in row %}<td>{{ cell }}</td>{% endfor %}</tr>{% endfor %}</tbody>
   </table></div>
   {% else %}<p>Писем по указанным условиям не найдено.</p>{% endif %}
-  <div class="buttons">
-    {% if offset > 0 %}<a class="button" href="{{ previous_url }}">← Предыдущие</a>{% endif %}
-    {% if cells|length == 50 and offset < 1000000 %}<a class="button" href="{{ next_url }}">Следующие →</a>{% endif %}
-  </div>
+  {% include "log_pagination.html" %}
 </section>
 {% endif %}
 {% endif %}

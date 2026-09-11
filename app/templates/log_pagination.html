@@ -1,0 +1,9 @@
+<nav class="pagination" aria-label="Страницы журнала">
+  {% if offset > 0 %}
+  <a class="button" href="{{ first_url }}">К началу</a>
+  <a class="button" href="{{ previous_url }}">← Предыдущая</a>
+  {% else %}<span class="button" aria-disabled="true">← Предыдущая</span>{% endif %}
+  <span>Страница {{ page_number }}</span>
+  {% if has_next %}<a class="button" href="{{ next_url }}">Следующая →</a>
+  {% else %}<span class="button" aria-disabled="true">Следующая →</span>{% endif %}
+</nav>

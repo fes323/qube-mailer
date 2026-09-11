@@ -17,7 +17,7 @@ from app.database import Database
 from app.main import create_app
 from app.mailer import MailWorker, Submission, parse_recipients
 from app.queue_crypto import QueueCipher
-from app.smtp_bz import JournalError, fetch_messages, message_rows
+from app.smtp_bz import JournalError, fetch_message_page, fetch_messages, message_rows
 
 AUTH = ('admin', 'admin-secret-at-least-32-characters')
 
@@ -183,24 +183,27 @@ def test_logs_filters_pagination_no_store_and_safe_rendering(tmp_path, monkeypat
     def fake_fetch(key, params):
         calls.append((key, params))
         return [{'to': 'recipient@example.test', 'subject': '<script>unsafe</script>',
-                 'status': 'sent'} for _ in range(50)]
-    monkeypatch.setattr('app.main.fetch_messages', fake_fetch)
+                 'status': 'sent'} for _ in range(params['limit'])]
+    monkeypatch.setattr('app.main.fetch_message_page', fake_fetch)
     with TestClient(app) as client:
         assert client.get('/admin/logs').status_code == 401
         assert calls == []
         response = client.get('/admin/logs', auth=AUTH, params={
             'recipient': 'recipient@example.test', 'delivery_status': 'sent',
-            'start_date': '2026-09-01', 'end_date': '2026-09-11', 'offset': 50,
+            'start_date': '2026-09-01', 'end_date': '2026-09-11', 'offset': 100,
         })
         assert response.status_code == 200
         assert response.headers['cache-control'] == 'no-store'
         assert '&lt;script&gt;' in response.text and '<script>unsafe' not in response.text
         assert 'private-api-key' not in response.text
-        assert 'offset=100' in response.text and 'offset=0' in response.text
-        assert calls[-1][1] == {'limit': 50, 'offset': 50, 'to': 'recipient@example.test',
+        assert 'offset=200' in response.text and 'offset=0' in response.text
+        assert 'Страница 2' in response.text
+        assert response.text.count('aria-label="Страницы журнала"') == 2
+        assert calls[-1][1] == {'limit': 100, 'offset': 100, 'to': 'recipient@example.test',
                                 'startDate': '2026-09-01', 'endDate': '2026-09-11', 'status': 'sent'}
         assert client.get('/admin/logs?start_date=&end_date=', auth=AUTH).status_code == 200
-        for query in ('offset=-1', 'start_date=invalid', 'start_date=2026-02-30',
+        assert calls[-1][1] == {'limit': 100, 'offset': 0}
+        for query in ('limit=0', 'limit=501', 'limit=invalid', 'offset=-1', 'start_date=invalid', 'start_date=2026-02-30',
                       'start_date=2026-09-11&end_date=2026-09-01', 'delivery_status=invalid'):
             assert client.get('/admin/logs?' + query, auth=AUTH).status_code == 422
     assert b'recipient@example.test' not in cfg.database_path.read_bytes()
@@ -212,12 +215,12 @@ def test_logs_missing_key_empty_and_provider_failure(tmp_path, monkeypatch):
         response = client.get('/admin/logs', auth=AUTH)
         assert 'SMTP_BZ_API_KEY' in response.text
     app = create_app(replace(config(tmp_path), smtp_bz_api_key='secret'))
-    monkeypatch.setattr('app.main.fetch_messages', lambda *_: [])
+    monkeypatch.setattr('app.main.fetch_message_page', lambda *_: [])
     with TestClient(app) as client:
         assert 'Писем по указанным условиям не найдено' in client.get('/admin/logs', auth=AUTH).text
         def failure(*_):
             raise JournalError('SMTP.bz недоступен. Повторите позже.')
-        monkeypatch.setattr('app.main.fetch_messages', failure)
+        monkeypatch.setattr('app.main.fetch_message_page', failure)
         response = client.get('/admin/logs', auth=AUTH)
         assert response.status_code == 200 and 'role="alert"' in response.text
         assert 'не найдено' not in response.text
@@ -235,6 +238,65 @@ def test_journal_client_uses_documented_authorization_and_endpoint(monkeypatch):
     assert message_rows({'result': {'messages': []}}) == []
     with pytest.raises(JournalError):
         message_rows({'error': 'bad key'})
+
+
+@pytest.mark.parametrize('total, expected_batches', [(450, [100, 100, 50]), (320, [100, 100]), (200, [100])])
+def test_journal_page_batches_preserve_offset_filters_and_order(monkeypatch, total, expected_batches):
+    records = [{'id': value} for value in range(1000, 1000 - total, -1)]
+    calls = []
+
+    def fake_fetch(key, params):
+        assert key == 'key'
+        assert params['to'] == 'recipient@example.test'
+        calls.append(params)
+        return records[params['offset']:params['offset'] + params['limit']]
+
+    monkeypatch.setattr('app.smtp_bz.fetch_messages', fake_fetch)
+    result = fetch_message_page('key', {'limit': 250, 'offset': 200, 'to': 'recipient@example.test'})
+    assert result == records[200:450]
+    assert [call['limit'] for call in calls] == expected_batches
+    assert [call['offset'] for call in calls] == [200 + index * 100 for index in range(len(calls))]
+
+
+def test_journal_batch_failure_does_not_return_partial_page(monkeypatch):
+    def fake_fetch(key, params):
+        if params['offset']:
+            raise JournalError('SMTP.bz недоступен')
+        return [{'id': index} for index in range(100)]
+
+    monkeypatch.setattr('app.smtp_bz.fetch_messages', fake_fetch)
+    with pytest.raises(JournalError):
+        fetch_message_page('key', {'limit': 250, 'offset': 0})
+
+
+def test_log_navigation_preserves_page_size_and_handles_end(tmp_path, monkeypatch):
+    from html import unescape
+    import re
+    from urllib.parse import parse_qs, urlsplit
+
+    app = create_app(replace(config(tmp_path), smtp_bz_api_key='key'))
+    records = [{'id': index} for index in range(620)]
+
+    def fake_fetch(key, params):
+        return records[params['offset']:params['offset'] + params['limit']]
+
+    monkeypatch.setattr('app.smtp_bz.fetch_messages', fake_fetch)
+    with TestClient(app) as client:
+        response = client.get('/admin/logs?limit=250&offset=250&delivery_status=sent', auth=AUTH)
+        assert response.status_code == 200
+        links = [unescape(link) for link in re.findall(r'href="([^"]+)"', response.text)]
+        next_link = next(link for link in links if 'offset=500' in link)
+        assert parse_qs(urlsplit(next_link).query) == {
+            'limit': ['250'], 'offset': ['500'], 'delivery_status': ['sent'],
+        }
+        last_page = client.get(next_link, auth=AUTH)
+        assert 'Страница 3' in last_page.text
+        assert 'Записи 501–620' in last_page.text
+        assert 'offset=750' not in last_page.text
+        assert 'offset=250' in last_page.text
+        empty_page = client.get('/admin/logs?limit=250&offset=750', auth=AUTH)
+        assert 'Писем по указанным условиям не найдено' in empty_page.text
+        assert 'offset=500' in empty_page.text
 
 
 @pytest.mark.parametrize('code', [401, 403, 404, 429, 500, 302])

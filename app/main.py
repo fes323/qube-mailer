@@ -19,7 +19,7 @@ from app.config import Config
 from app.database import Database
 from app.mailer import MailWorker, parse_recipients
 from app.queue_crypto import QueueCipher
-from app.smtp_bz import JournalError, fetch_messages, journal_table
+from app.smtp_bz import JournalError, fetch_message_page, journal_table
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
@@ -237,6 +237,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     async def logs_page(
         request: Request, _: str = Depends(require_admin),
         offset: int = Query(0, ge=0, le=1_000_000),
+        limit: int = Query(100, ge=1, le=500),
         recipient: str = Query("", max_length=320),
         start_date: str = Query("", max_length=10), end_date: str = Query("", max_length=10),
         delivery_status: str = Query("", pattern="^(|sent|resent|return|bounce|cancel)$"),
@@ -248,7 +249,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             raise HTTPException(status_code=422, detail="Некорректная дата") from None
         if start_date and end_date and start_date > end_date:
             raise HTTPException(status_code=422, detail="Дата начала позже даты окончания")
-        params: dict[str, str | int] = {"limit": 50, "offset": offset}
+        params: dict[str, str | int] = {"limit": limit, "offset": offset}
         for key, value in (("to", recipient.strip()), ("startDate", start_date),
                            ("endDate", end_date), ("status", delivery_status)):
             if value:
@@ -257,7 +258,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         error = ""
         if config.smtp_bz_api_key:
             try:
-                rows = await asyncio.to_thread(fetch_messages, config.smtp_bz_api_key, params)
+                rows = await asyncio.to_thread(fetch_message_page, config.smtp_bz_api_key, params)
             except JournalError as failure:
                 error = str(failure)
         columns, cells = journal_table(rows)
@@ -265,9 +266,12 @@ def create_app(config: Config | None = None) -> FastAPI:
             "configured": bool(config.smtp_bz_api_key), "error": error,
             "columns": columns, "cells": cells, "recipient": recipient,
             "start_date": start_date or "", "end_date": end_date or "",
-            "delivery_status": delivery_status, "offset": offset,
-            "previous_url": str(request.url.include_query_params(offset=max(0, offset - 50))),
-            "next_url": str(request.url.include_query_params(offset=offset + 50)),
+            "delivery_status": delivery_status, "offset": offset, "limit": limit,
+            "page_number": offset // limit + 1,
+            "has_next": len(rows) == limit and offset + limit <= 1_000_000,
+            "first_url": str(request.url.include_query_params(offset=0, limit=limit)),
+            "previous_url": str(request.url.include_query_params(offset=max(0, offset - limit), limit=limit)),
+            "next_url": str(request.url.include_query_params(offset=offset + limit, limit=limit)),
         })
 
     def validate_sender_name(value: str) -> str:
