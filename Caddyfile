@@ -1,0 +1,38 @@
+{$DOMAIN} {
+    @notAdmin not path /admin /admin/*
+    log_skip @notAdmin
+    log {
+        output file /var/log/caddy/admin-access.log {
+            roll_size 10MiB
+            roll_keep 7
+            roll_keep_for 168h
+        }
+        format filter {
+            request>uri query {
+                delete recipient
+            }
+            request>headers>Authorization delete
+            request>headers>Cookie delete
+            request>headers>X-Webhook-Key delete
+            request>headers>User-Agent delete
+            request>headers>Referer delete
+        }
+    }
+
+    request_body {
+        max_size 1MB
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        X-Robots-Tag "noindex, nofollow, noarchive, nosnippet, noimageindex"
+        -Server
+    }
+
+    encode zstd gzip
+    reverse_proxy app:8000
+}

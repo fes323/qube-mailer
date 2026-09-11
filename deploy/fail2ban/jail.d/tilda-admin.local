@@ -1,0 +1,23 @@
+[tilda-admin]
+enabled = true
+filter = tilda-admin
+logpath = /var/log/caddy/admin-access.log
+backend = auto
+usedns = no
+
+# Five failed logins from one address within ten minutes.
+maxretry = 5
+findtime = 10m
+bantime = 1h
+bantime.increment = true
+bantime.factor = 2
+bantime.maxtime = 1w
+
+# Published Docker ports traverse FORWARD, so INPUT would not protect Caddy.
+banaction = iptables-multiport
+chain = DOCKER-USER
+port = http,https
+protocol = tcp
+
+ignoreip = 127.0.0.1/8 ::1
+

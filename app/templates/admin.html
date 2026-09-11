@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Tilda Webhook</h1>
+  <p class="lead">Настройки письма по умолчанию и состояние очереди</p>
+
+  <section class="cards" aria-label="Статистика">
+    <div class="card"><div class="label">Получено</div><div class="metric">{{ totals.received }}</div></div>
+    <div class="card"><div class="label">Принято в очередь</div><div class="metric">{{ totals.accepted }}</div></div>
+    <div class="card"><div class="label">Заявок отправлено всем получателям</div><div class="metric">{{ totals.sent }}</div></div>
+    <div class="card"><div class="label">Попыток с ошибкой</div><div class="metric">{{ totals.failed }}</div></div>
+  </section>
+
+  <section class="panel">
+    <h2>Состояние</h2>
+    <div class="status">
+      <span class="pill {{ 'ok' if smtp_configured else '' }}">SMTP: {{ 'настроен' if smtp_configured else 'не настроен' }}</span>
+      <span class="pill">В очереди: {{ queue_depth }}</span>
+      <span class="pill">Ожидают повтора: {{ queue_retrying }}</span>
+      <span class="pill">Тестов Tilda: {{ totals.test_requests }}</span>
+      <span class="pill">Дубликатов: {{ totals.duplicates }}</span>
+      <span class="pill">Истёк срок: {{ totals.expired }}</span>
+      <span class="pill">Неверный API key: {{ totals.unauthorized }}</span>
+      <span class="pill">Переполнений очереди: {{ totals.queue_full }}</span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Полностью отправленные заявки — последние 14 дней</h2>
+    <div class="chart">
+      {% for row in by_day %}
+      <div class="bar-wrap" title="{{ row.day }}: {{ row.sent }}">
+        <div class="bar" style="height:{{ 2 + (row.sent / max_sent * 118)|round }}px"></div>
+        <div class="day">{{ row.day[5:] }}</div>
+      </div>
+      {% else %}
+      <p class="hint">Данных пока нет.</p>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Письмо по умолчанию</h2>
+    {% if saved %}<div class="flash">Настройки сохранены.</div>{% endif %}
+    <form method="post" action="/admin/settings">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <label>Получатели
+        <textarea name="recipients" required placeholder="manager@example.ru, sales@example.ru">{{ settings.recipients }}</textarea>
+        <span class="hint">Через запятую, точку с запятой или с новой строки. Каждый адрес получит отдельное письмо.</span>
+      </label>
+      <label>Email отправителя
+        <input type="email" name="sender_email" required value="{{ settings.sender_email }}" placeholder="forms@example.ru">
+        <span class="hint">Домен должен быть верифицирован в SMTP.BZ.</span>
+      </label>
+      <label>Имя отправителя
+        <input type="text" name="sender_name" maxlength="100" value="{{ settings.sender_name }}">
+      </label>
+      <label>Тема
+        <input type="text" name="subject_template" required value="{{ settings.subject_template }}">
+        <span class="hint">Можно использовать любое поле формы: <code>{{ '{{ Name }}' }}</code>, <code>{{ '{{ formid }}' }}</code>, <code>{{ '{{ Название поля }}' }}</code>.</span>
+      </label>
+      <label>HTML-шаблон
+        <textarea class="code" name="email_template" required>{{ settings.email_template }}</textarea>
+        <span class="hint"><code>{{ '{{ fields_table }}' }}</code> — таблица всех полей; <code>{{ '{{ received_at }}' }}</code> — время; любое поле формы доступно по имени.</span>
+      </label>
+      <button type="submit">Сохранить</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>Подключение Tilda</h2>
+    <p>URL: <code>/webhook/tilda</code> на домене сервиса.</p>
+    <p>Передача ключа: заголовок <code>{{ webhook_header }}</code>, значение — из <code>WEBHOOK_API_KEY</code>.</p>
+    <p class="hint">Официальная документация webhook гарантирует системные поля <code>formid</code> и <code>tranid</code>. <code>formname</code> используйте для маршрута только после того, как увидите его в справочнике. Для полностью контролируемого имени маршрута добавьте одинаково названное скрытое поле в нужную форму Tilda.</p>
+  </section>
+{% endblock %}

@@ -1,0 +1,16 @@
+.env
+.venv/
+.uv-cache/
+.audit-cache/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.db
+*.db-shm
+*.db-wal
+.coverage
+deploy/fail2ban/db/*
+!deploy/fail2ban/db/.gitkeep
+secrets/*.json
+!secrets/*.json.example
+DEPLOY_UBUNTU_26_04.md

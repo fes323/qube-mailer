@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Формы и маршруты — Webhook{% endblock %}
+{% block content %}
+<h1>Формы и маршруты</h1>
+<p class="lead">Настройте получателей и письмо для каждой формы.</p>
+<a class="button" href="/admin/routes/new">Добавить маршрут</a>
+{% if saved %}<div class="flash" role="status">Маршрут удалён.</div>{% endif %}
+<section class="panel">
+<h2>Принимаемые формы</h2>
+<p class="hint">Маршрут срабатывает при точном совпадении поля и значения. При нескольких совпадениях применяется первый созданный маршрут. Если совпадений нет, используется <a href="/admin">письмо по умолчанию</a>. Выключенный маршрут пропускается; приём заявки продолжается.</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Название</th><th>Условие</th><th>Получатели</th><th>Состояние</th></tr></thead>
+<tbody>{% for route in routes %}
+<tr><td><a href="/admin/routes/{{ route.id }}">{{ route.name }}</a></td><td><code>{{ route.match_field }}</code> = {{ route.match_value }}</td><td>{{ route.recipients }}</td><td>{{ 'Включён' if route.enabled else 'Выключен' }}</td></tr>
+{% else %}<tr><td colspan="4">Маршрутов пока нет. Все заявки используют письмо по умолчанию.</td></tr>{% endfor %}</tbody>
+</table></div>
+</section>
+  <section class="panel">
+    <h2>Справочник полей форм</h2>
+    <p class="hint">Сохраняются только имена переменных, идентификатор/название формы, время наблюдения и счётчик. Значения полей и персональные данные в справочник не записываются.</p>
+    {% for form in field_catalog %}
+    <div class="catalog-form">
+      <h3>{{ form.form_name or 'Форма без переданного названия' }}</h3>
+      <p class="meta">formid: <code>{{ form.form_id or 'не передан' }}</code> · впервые: {{ form.first_seen }} · последний раз: {{ form.last_seen }}</p>
+      <div class="field-list">
+        {% for field in form.fields %}
+        <div class="field"><code>&#123;&#123; {{ field.name }} &#125;&#125;</code><div class="meta">получено: {{ field.seen_count }}</div></div>
+        {% endfor %}
+      </div>
+    </div>
+    {% else %}
+    <p>Справочник пока пуст. Поля появятся после первой настоящей заявки.</p>
+    {% endfor %}
+  </section>
+
+{% endblock %}

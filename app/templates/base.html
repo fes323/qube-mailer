@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive,nosnippet,noimageindex">
+  <title>{% block title %}Webhook — админка{% endblock %}</title>
+  <style>
+    :root{color-scheme:light;--bg:#f3f5f9;--card:#fff;--text:#172033;--muted:#64748b;--line:#dbe1ea;--blue:#315efb;--green:#138a52;--red:#c0392b}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,sans-serif}
+    main{max-width:1080px;margin:0 auto;padding:32px 20px 56px} h1{font-size:28px;margin:0} h2{font-size:18px;margin:0 0 18px}.lead{color:var(--muted);margin:6px 0 26px}
+    .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.card,.panel{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 2px 8px #1720330a}
+    .card{padding:18px}.metric{font-size:30px;font-weight:750;margin-top:6px}.label{color:var(--muted);font-size:13px}.panel{padding:22px;margin-top:18px}
+    .status{display:flex;gap:12px;flex-wrap:wrap}.pill{padding:7px 10px;border-radius:999px;background:#eef2ff;color:#3046a2;font-size:13px}.pill.ok{background:#e9f8ef;color:var(--green)}
+    .chart{display:flex;height:150px;align-items:end;gap:7px;border-bottom:1px solid var(--line);padding-top:16px}.bar-wrap{flex:1;text-align:center;min-width:20px}.bar{background:var(--blue);border-radius:5px 5px 0 0;min-height:2px}.day{font-size:10px;color:var(--muted);margin-top:6px;white-space:nowrap}
+    form{display:grid;gap:16px}label{display:grid;gap:7px;font-weight:650}input,textarea{width:100%;padding:11px 12px;border:1px solid #cbd3df;border-radius:8px;background:#fff;color:var(--text);font:inherit}input[type=checkbox]{width:auto}textarea{min-height:86px;resize:vertical}textarea.code{min-height:260px;font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
+    input:focus,textarea:focus{outline:3px solid #315efb22;border-color:var(--blue)}button{justify-self:start;border:0;border-radius:8px;background:var(--blue);color:#fff;padding:11px 18px;font-weight:700;cursor:pointer}.danger{background:var(--red)}.buttons{display:flex;gap:10px;flex-wrap:wrap}.check{display:flex;align-items:center;gap:9px}.hint{color:var(--muted);font-size:13px;font-weight:400}.flash{background:#e9f8ef;color:var(--green);padding:11px 14px;border-radius:8px;margin-bottom:16px}
+    .route,.catalog-form{border:1px solid var(--line);border-radius:10px;padding:18px;margin-top:14px}.route h3,.catalog-form h3{margin:0 0 14px;font-size:16px}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}.field-list{display:flex;flex-wrap:wrap;gap:8px}.field{background:#f5f7fb;border:1px solid var(--line);border-radius:7px;padding:7px 9px}.meta{color:var(--muted);font-size:12px;margin-top:4px}
+    code{background:#eef1f6;padding:2px 5px;border-radius:4px}@media(max-width:760px){.cards{grid-template-columns:repeat(2,1fr)}.grid2{grid-template-columns:1fr}.day{display:none}}@media(max-width:440px){.cards{grid-template-columns:1fr}}
+    nav{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:24px}a{color:var(--blue)}nav a,.button{display:inline-block;padding:10px 14px;border:1px solid var(--line);border-radius:8px;text-decoration:none;background:#fff}nav a[aria-current=page]{background:var(--blue);color:#fff}.table-scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;text-align:left}th,td{padding:12px;border-bottom:1px solid var(--line);vertical-align:top}td{overflow-wrap:anywhere;min-width:100px;max-width:400px}.error{color:var(--red);background:#fff0ee;padding:14px;border-radius:8px}select{padding:11px;border:1px solid var(--line);border-radius:8px;background:#fff;font:inherit}.journal td{white-space:pre-wrap;font-size:13px}
+  </style>
+</head>
+<body>
+<main>
+  <nav aria-label="Навигация">
+    <a href="/admin" {% if request.url.path == '/admin' %}aria-current="page"{% endif %}>Общие настройки</a>
+    <a href="/admin/routes" {% if request.url.path.startswith('/admin/routes') %}aria-current="page"{% endif %}>Формы и маршруты</a>
+    <a href="/admin/logs" {% if request.url.path == '/admin/logs' %}aria-current="page"{% endif %}>Журнал отправок</a>
+  </nav>
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

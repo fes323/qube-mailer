@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}{{ route.name if route else 'Новая форма' }} — Webhook{% endblock %}
+{% block content %}
+{% set is_new = route is none %}
+<h1>{{ 'Добавить маршрут' if is_new else route.name }}</h1>
+<p class="lead"><a href="/admin/routes">← Все формы и маршруты</a></p>
+{% if saved %}<div class="flash" role="status">Настройки сохранены.</div>{% endif %}
+{% if is_new %}
+{% set route = dict(name='', match_field='formid', match_value='', recipients=settings.recipients, subject_template=settings.subject_template, email_template=settings.email_template, sender_name='', enabled=true) %}
+{% endif %}
+<section class="panel">
+<p class="hint">Укажите поле формы и его точное значение. Можно использовать formid, formname или собственное скрытое поле.</p>
+    <form class="route" method="post" action="{{ '/admin/routes' if is_new else '/admin/routes/' ~ route.id }}">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      
+      <div class="grid2">
+        <label>Название маршрута
+          <input type="text" name="name" maxlength="100" required value="{{ route.name }}">
+        </label>
+        <label class="check">
+          <input type="checkbox" name="enabled" value="1" {% if route.enabled %}checked{% endif %}>
+          Маршрут включён
+        </label>
+        <label>Поле для сравнения
+          <input type="text" name="match_field" maxlength="200" required value="{{ route.match_field }}">
+        </label>
+        <label>Точное значение
+          <input type="text" name="match_value" maxlength="500" required value="{{ route.match_value }}">
+        </label>
+      </div>
+      <label>Получатели
+        <textarea name="recipients" required>{{ route.recipients }}</textarea>
+      </label>
+      <label>Имя отправителя
+        <input type="text" name="sender_name" maxlength="100" value="{{ route.sender_name }}" placeholder="{{ settings.sender_name }}">
+        <span class="hint">Если оставить пустым, используется общее имя отправителя: {{ settings.sender_name or 'не задано' }}.</span>
+      </label>
+      <p class="hint">Каждому получателю отправляется отдельное письмо. Email отправителя: {{ settings.sender_email or 'укажите в общих настройках' }}.</p>
+      <label>Тема
+        <input type="text" name="subject_template" required value="{{ route.subject_template }}">
+      </label>
+      <label>HTML-шаблон
+        <textarea class="code" name="email_template" required>{{ route.email_template }}</textarea>
+      </label>
+      <div class="buttons">
+        <button type="submit" name="operation" value="save">Сохранить маршрут</button>
+        {% if not is_new %}<button class="danger" type="submit" name="operation" value="delete">Удалить маршрут</button>{% endif %}
+      </div>
+    </form>
+
+<p class="hint">В теме и HTML доступны переменные формы, например <code>{{ '{{ Name }}' }}</code>. <code>{{ '{{ fields_table }}' }}</code> — таблица полей, <code>{{ '{{ received_at }}' }}</code> — время получения.</p>
+</section>
+{% endblock %}

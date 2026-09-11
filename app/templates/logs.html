@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Журнал отправок — Webhook{% endblock %}
+{% block content %}
+<h1>Журнал отправок</h1>
+<p class="lead">Письма аккаунта SMTP.bz. Данные загружаются при открытии страницы и не сохраняются в приложении.</p>
+{% if not configured %}
+<section class="panel">
+  <h2>Подключите журнал SMTP.bz</h2>
+  <p>Укажите <code>SMTP_BZ_API_KEY</code> в файле <code>.env</code> сервера и пересоздайте контейнер приложения.</p>
+  <p>API-ключ доступен в SMTP.bz в разделе «Мой профиль». Это отдельная настройка от SMTP-пароля.</p>
+</section>
+{% else %}
+<section class="panel">
+  <form method="get" action="/admin/logs">
+    <div class="grid2">
+      <label>Email получателя<input type="email" name="recipient" maxlength="320" value="{{ recipient }}"></label>
+      <label>Статус<select name="delivery_status">
+        {% for value, label in [('', 'Все'), ('sent', 'Отправлено'), ('resent', 'Повторная отправка'), ('return', 'Возврат'), ('bounce', 'Отклонено'), ('cancel', 'Отменено')] %}
+        <option value="{{ value }}" {% if delivery_status == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select></label>
+      <label>Дата от<input type="date" name="start_date" value="{{ start_date }}"></label>
+      <label>Дата до<input type="date" name="end_date" value="{{ end_date }}"></label>
+    </div>
+    <div class="buttons"><button type="submit">Показать</button><a class="button" href="/admin/logs">Сбросить</a></div>
+  </form>
+</section>
+{% if error %}<p class="error" role="alert">{{ error }}</p>
+{% else %}
+<section class="panel">
+  {% if cells %}
+  <p class="hint">Записи {{ offset + 1 }}–{{ offset + cells|length }}. Названия полей и значения приведены из API SMTP.bz.</p>
+  <div class="table-scroll"><table class="journal">
+    <thead><tr>{% for column in columns %}<th>{{ column }}</th>{% endfor %}</tr></thead>
+    <tbody>{% for row in cells %}<tr>{% for cell in row %}<td>{{ cell }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<p>Писем по указанным условиям не найдено.</p>{% endif %}
+  <div class="buttons">
+    {% if offset > 0 %}<a class="button" href="{{ previous_url }}">← Предыдущие</a>{% endif %}
+    {% if cells|length == 50 and offset < 1000000 %}<a class="button" href="{{ next_url }}">Следующие →</a>{% endif %}
+  </div>
+</section>
+{% endif %}
+{% endif %}
+{% endblock %}
