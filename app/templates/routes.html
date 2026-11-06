@@ -15,6 +15,19 @@
 {% else %}<tr><td colspan="4">Маршрутов пока нет. Все заявки используют письмо по умолчанию.</td></tr>{% endfor %}</tbody>
 </table></div>
 </section>
+<section class="panel">
+<h2>Формы QUBE CMS</h2>
+<p class="hint">Список приходит из QUBE CMS по API (раздел «Формы и заявки → Почта и отбивки»). Показано, какой маршрут и какая отбивка сработают для каждой формы.</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Форма</th><th>formid</th><th>Тип (form_route)</th><th>Письмо организаторам</th><th>Отбивка</th></tr></thead>
+<tbody>{% for form in cms_forms %}
+<tr><td>{% if form.page_url %}<a href="{{ form.page_url }}" rel="noreferrer" target="_blank">{{ form.formname or form.formid }}</a>{% else %}{{ form.formname or form.formid }}{% endif %}<div class="meta">синхронизировано {{ form.synced }}</div></td>
+<td><code>{{ form.formid }}</code></td><td>{{ form.kind_label or form.form_route or '—' }}{% if form.form_route %} <code>{{ form.form_route }}</code>{% endif %}</td>
+<td>{% if form.route %}<a href="/admin/routes/{{ form.route.id }}">{{ form.route.name }}</a>{% else %}По умолчанию · <a href="/admin/routes/new?match_field=formid&amp;match_value={{ form.formid|urlencode }}&amp;name={{ (form.formname or form.formid)|urlencode }}">свой маршрут</a>{% endif %}</td>
+<td>{% if form.autoreply %}<a href="/admin/autoreplies/{{ form.autoreply.id }}">{{ form.autoreply.name }}</a>{% if form.autoreply.any_form %} <span class="hint">(для всех форм)</span>{% endif %}{% else %}Нет · {% endif %}{% if not form.autoreply or form.autoreply.any_form %}<a href="/admin/autoreplies/new?match_field=formid&amp;match_value={{ form.formid|urlencode }}&amp;name={{ ('Отбивка: ' ~ (form.formname or form.formid))|urlencode }}">создать</a>{% endif %}</td></tr>
+{% else %}<tr><td colspan="5">QUBE CMS ещё не передавала список форм. Задайте INTEGRATION_API_KEY здесь и QUBE_MAILER_API_KEY в CMS.</td></tr>{% endfor %}</tbody>
+</table></div>
+</section>
   <section class="panel">
     <h2>Справочник полей форм</h2>
     <p class="hint">Сохраняются только имена переменных, идентификатор/название формы, время наблюдения и счётчик. Значения полей и персональные данные в справочник не записываются.</p>

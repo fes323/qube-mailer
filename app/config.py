@@ -34,6 +34,9 @@ class Config:
     retry_base_seconds: int
     retry_max_seconds: int
     smtp_bz_api_key: str = ""
+    # Direct integration with QUBE CMS (/api/v1). Empty disables the API.
+    integration_api_key: str = ""
+    history_retention_days: int = 180
 
     @classmethod
     def from_env(cls) -> Config:
@@ -66,6 +69,8 @@ class Config:
             retry_base_seconds=int(os.getenv("RETRY_BASE_SECONDS", "5")),
             retry_max_seconds=int(os.getenv("RETRY_MAX_SECONDS", "3600")),
             smtp_bz_api_key=os.getenv("SMTP_BZ_API_KEY", "").strip(),
+            integration_api_key=os.getenv("INTEGRATION_API_KEY", "").strip(),
+            history_retention_days=int(os.getenv("HISTORY_RETENTION_DAYS", "180")),
         )
 
     def validate(self) -> None:
@@ -93,6 +98,14 @@ class Config:
             raise RuntimeError(f"Secrets must be at least 32 characters long: {', '.join(weak)}")
         if len({self.webhook_api_key, self.admin_password, self.csrf_secret}) != 3:
             raise RuntimeError("WEBHOOK_API_KEY, ADMIN_PASSWORD and CSRF_SECRET must be different")
+        if self.integration_api_key:
+            key = self.integration_api_key
+            if len(key) < 32 or key.lower().startswith("generate-") or not key.isascii() or not key.isprintable():
+                raise RuntimeError("INTEGRATION_API_KEY must be at least 32 printable ASCII characters")
+            if key in {self.webhook_api_key, self.admin_password, self.csrf_secret}:
+                raise RuntimeError("INTEGRATION_API_KEY must differ from the other secrets")
+        if not 1 <= self.history_retention_days <= 3650:
+            raise ValueError("HISTORY_RETENTION_DAYS must be between 1 and 3650")
         if not re.fullmatch(r"[A-Za-z0-9-]+", self.webhook_api_key_header):
             raise ValueError("WEBHOOK_API_KEY_HEADER must be a valid HTTP header name")
         if self.active_queue_key_version not in self.queue_keys:

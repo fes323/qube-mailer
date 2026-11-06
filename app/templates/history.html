@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}История писем — Webhook{% endblock %}
+{% block content %}
+<h1>История писем</h1>
+<p class="lead">Письма организаторам, отбивки и тесты. Хранятся только адрес, тема, статус и время, без содержимого заявки.</p>
+<section class="panel">
+<form method="get" action="/admin/history" class="filters">
+  <label>Тип<select name="kind"><option value="">Все</option>{% for key, label in kind_labels.items() %}<option value="{{ key }}" {% if kind == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+  <label>Статус<select name="status"><option value="">Все</option>{% for key, label in status_labels.items() %}<option value="{{ key }}" {% if status == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+  <label>Отбивка<select name="rule"><option value="">Все</option>{% for item in rules %}<option value="{{ item.id }}" {% if rule == item.id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</select></label>
+  <label>Email (начало адреса)<input type="text" name="recipient" maxlength="320" value="{{ recipient }}"></label>
+  <label>С даты<input type="date" name="start_date" value="{{ start_date }}"></label>
+  <label>По дату<input type="date" name="end_date" value="{{ end_date }}"></label>
+  <label>На странице<select name="limit">{% for size in (50, 100, 200) %}<option value="{{ size }}" {% if limit == size %}selected{% endif %}>{{ size }}</option>{% endfor %}</select></label>
+  <button type="submit">Показать</button>
+</form>
+</section>
+<section class="panel">
+<h2>Найдено: {{ total }}</h2>
+<div class="table-scroll"><table>
+<thead><tr><th>Время</th><th>Тип</th><th>Правило</th><th>Кому</th><th>Тема</th><th>Вложений</th><th>Статус</th><th>Попыток</th></tr></thead>
+<tbody>{% for row in rows %}
+<tr><td>{{ row.created }}</td><td>{{ kind_labels[row.kind] }}</td>
+<td>{% if row.rule_id and row.kind != 'notification' %}<a href="/admin/autoreplies/{{ row.rule_id }}">{{ row.rule_name }}</a>{% else %}{{ row.rule_name or '—' }}{% endif %}</td>
+<td>{{ row.recipient or '—' }}</td><td>{{ row.subject }}</td><td>{{ row.attachments }}</td>
+<td><span class="tag {{ row.status }}">{{ status_labels[row.status] }}</span>{% if row.error %}<div class="meta">{{ row.error }}</div>{% endif %}</td>
+<td>{{ row.attempts }}</td></tr>
+{% else %}<tr><td colspan="8">Записей нет.</td></tr>{% endfor %}</tbody>
+</table></div>
+<nav class="pagination buttons" aria-label="Страницы истории">
+  {% if previous_url %}<a class="button" href="{{ first_url }}">К началу</a><a class="button" href="{{ previous_url }}">← Предыдущая</a>{% else %}<span class="button" aria-disabled="true">← Предыдущая</span>{% endif %}
+  <span>Страница {{ page }} из {{ pages }}</span>
+  {% if next_url %}<a class="button" href="{{ next_url }}">Следующая →</a><a class="button" href="{{ last_url }}">В конец</a>{% else %}<span class="button" aria-disabled="true">Следующая →</span>{% endif %}
+</nav>
+</section>
+{% endblock %}

@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Новая отбивка' if is_new else rule.name }} — Webhook{% endblock %}
+{% block content %}
+<h1>{{ 'Добавить отбивку' if is_new else rule.name }}</h1>
+<p class="lead"><a href="/admin/autoreplies">← Все отбивки</a></p>
+{% if saved %}<div class="flash" role="status">Отбивка сохранена.</div>{% endif %}
+{% if tested %}<div class="flash" role="status">Тестовое письмо отправлено на {{ tested }}.</div>{% endif %}
+{% if test_error %}<div class="error" role="alert">Тестовое письмо не отправлено: {{ test_error }}. Проверьте SMTP и адрес отправителя в общих настройках.</div>{% endif %}
+{% if not settings.sender_email %}<div class="error" role="alert">Не указан email отправителя в <a href="/admin">общих настройках</a>. Без него отбивки не отправляются.</div>{% endif %}
+<section class="panel">
+<form method="post" enctype="multipart/form-data" action="{{ '/admin/autoreplies' if is_new else '/admin/autoreplies/' ~ rule.id }}">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <div class="grid2">
+    <label>Название
+      <input type="text" name="name" maxlength="100" required value="{{ rule.name }}">
+    </label>
+    <label class="check"><input type="checkbox" name="enabled" value="1" {% if rule.enabled %}checked{% endif %}> Отбивка включена</label>
+  </div>
+  <fieldset class="radio"><legend class="label">Для какой формы</legend>
+    <label><input type="radio" name="match_mode" value="form" {% if not rule.any_form %}checked{% endif %}> Для формы, где поле равно значению</label>
+    <label><input type="radio" name="match_mode" value="any" {% if rule.any_form %}checked{% endif %}> Для всех форм без своей отбивки</label>
+  </fieldset>
+  <div class="grid2">
+    <label>Поле для сравнения
+      <input type="text" name="match_field" maxlength="200" list="match-fields" value="{{ rule.match_field }}">
+      <span class="hint"><code>formid</code> — конкретная форма, <code>form_route</code> — тип формы QUBE CMS (participation, feedback, newsletter, survey…).</span>
+    </label>
+    <label>Точное значение
+      <input type="text" name="match_value" maxlength="500" list="match-values" value="{{ rule.match_value }}">
+    </label>
+  </div>
+  <datalist id="match-fields"><option value="formid"><option value="form_route"><option value="formname"></datalist>
+  <datalist id="match-values">{% for key, items in known.items() %}{% for item in items %}<option value="{{ item }}" label="{{ key }}">{% endfor %}{% endfor %}</datalist>
+  <div class="grid2">
+    <label>Поле с email получателя
+      <input type="text" name="email_field" maxlength="200" value="{{ rule.email_field }}" placeholder="Email">
+      <span class="hint">Пусто — ищется поле Email, email, e-mail или mail.</span>
+    </label>
+    <label>Имя отправителя
+      <input type="text" name="sender_name" maxlength="100" value="{{ rule.sender_name }}" placeholder="{{ settings.sender_name }}">
+      <span class="hint">Email отправителя общий: {{ settings.sender_email or 'не задан' }}.</span>
+    </label>
+    <label>Адрес для ответа (Reply-To)
+      <input type="email" name="reply_to" maxlength="254" value="{{ rule.reply_to }}" placeholder="info@qube-expo.ru">
+      <span class="hint">Куда придёт ответ человека на отбивку.</span>
+    </label>
+  </div>
+  <label>Тема
+    <input type="text" name="subject_template" maxlength="1000" required value="{{ rule.subject_template }}">
+  </label>
+  <label>HTML-вёрстка письма
+    <textarea class="code" name="html_template" required>{{ rule.html_template }}</textarea>
+    <span class="hint">Полный HTML-документ. Подстановки: любое поле формы <code>{{ '{{ Name }}' }}</code>, <code>{{ '{{ fields_table }}' }}</code> — таблица всех полей, <code>{{ '{{ received_at }}' }}</code> — время. Значения экранируются. Картинки — только по https-ссылкам.</span>
+  </label>
+  <label>Текстовая версия (необязательно)
+    <textarea name="text_template" maxlength="100000">{{ rule.text_template }}</textarea>
+    <span class="hint">Пусто — текст собирается из HTML автоматически.</span>
+  </label>
+  <div>
+    <h3>Вложения</h3>
+    {% if attachments %}
+    <ul class="files">{% for item in attachments %}
+      <li><label class="check"><input type="checkbox" name="remove_attachment" value="{{ item.id }}"> удалить</label>
+      <span>{{ item.filename }}</span><span class="hint">{{ (item.size / 1024)|round(1) }} КБ · {{ item.content_type }}</span></li>
+    {% endfor %}</ul>
+    {% else %}<p class="hint">Вложений нет.</p>{% endif %}
+    <label>Добавить файлы
+      <input type="file" name="files" multiple>
+      <span class="hint">До {{ max_attachments }} файлов, каждый до {{ max_attachment_mb }} МБ, вместе до {{ max_total_mb }} МБ. Типы: {{ allowed }}.</span>
+    </label>
+  </div>
+  <div class="buttons">
+    <button type="submit" name="operation" value="save">Сохранить отбивку</button>
+    {% if not is_new %}<button class="danger" type="submit" name="operation" value="delete">Удалить отбивку</button>{% endif %}
+  </div>
+</form>
+</section>
+
+{% if not is_new %}
+<section class="panel" id="test">
+  <h2>Тестовое письмо</h2>
+  <p class="hint">Письмо уходит сразу на любой адрес с пометкой «[Тест]» в теме и с текущими вложениями. Результат записывается в историю.</p>
+  <form method="post" action="/admin/autoreplies/{{ rule.id }}/test">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <label>Email для теста
+      <input type="email" name="to" required maxlength="254" placeholder="you@example.ru">
+    </label>
+    <label>Значения полей формы для теста
+      <textarea name="values">{{ sample_text }}</textarea>
+      <span class="hint">По строке на поле: <code>Имя поля: значение</code>.</span>
+    </label>
+    <button type="submit">Отправить тест</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Предпросмотр</h2>
+  <p class="hint">Сохранённая версия. Поля показаны как <code>[Name]</code>. Скрипты и формы в предпросмотре отключены.</p>
+  <iframe class="preview" title="Предпросмотр отбивки" src="/admin/autoreplies/{{ rule.id }}/preview" sandbox></iframe>
+</section>
+
+<section class="panel">
+  <h2>Последние отправки</h2>
+  <div class="table-scroll"><table>
+  <thead><tr><th>Время</th><th>Тип</th><th>Кому</th><th>Тема</th><th>Статус</th></tr></thead>
+  <tbody>{% for row in history %}
+  <tr><td>{{ row.created }}</td><td>{{ kind_labels[row.kind] }}</td><td>{{ row.recipient or '—' }}</td><td>{{ row.subject }}</td>
+  <td><span class="tag {{ row.status }}">{{ status_labels[row.status] }}</span>{% if row.error %} <span class="hint">{{ row.error }}</span>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="5">Отправок пока не было.</td></tr>{% endfor %}</tbody>
+  </table></div>
+  <p><a href="/admin/history?rule={{ rule.id }}">Вся история этой отбивки →</a></p>
+</section>
+{% endif %}
+{% endblock %}

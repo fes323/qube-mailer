@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Отбивки — Webhook{% endblock %}
+{% block content %}
+<h1>Отбивки</h1>
+<p class="lead">Автоматические письма человеку, который заполнил форму: своя вёрстка, вложения, история и тестовая отправка.</p>
+<a class="button" href="/admin/autoreplies/new">Добавить отбивку</a>
+<a class="button" href="/admin/history?kind=autoreply">История отбивок</a>
+{% if saved %}<div class="flash" role="status">Отбивка удалена.</div>{% endif %}
+<section class="panel">
+<h2>Правила ({{ total }})</h2>
+<p class="hint">Отбивка срабатывает при точном совпадении поля формы и значения, как маршрут. Правило для конкретной формы важнее правила «Все формы». Адрес получателя берётся из поля <code>Email</code> (или <code>email</code>, <code>e-mail</code>, <code>mail</code>), если в правиле не указано другое поле. Письмо уходит в той же очереди, что и письмо организаторам, с повторами до 7 дней.</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Название</th><th>Форма</th><th>Вложения</th><th>Отправлено за 30 дней</th><th>Состояние</th></tr></thead>
+<tbody>{% for rule in rules %}
+<tr><td><a href="/admin/autoreplies/{{ rule.id }}">{{ rule.name }}</a></td>
+<td>{% if rule.any_form %}Все формы{% else %}<code>{{ rule.match_field }}</code> = {{ rule.match_value }}{% endif %}</td>
+<td>{{ attachments.get(rule.id, 0) }}</td><td><a href="/admin/history?rule={{ rule.id }}">{{ sent.get(rule.id, 0) }}</a></td>
+<td>{{ 'Включена' if rule.enabled else 'Выключена' }}</td></tr>
+{% else %}<tr><td colspan="5">Отбивок пока нет.</td></tr>{% endfor %}</tbody>
+</table></div>
+{% if pages > 1 %}
+<nav class="pagination buttons" aria-label="Страницы">
+  {% if page > 1 %}<a class="button" href="?page={{ page - 1 }}">← Предыдущая</a>{% endif %}
+  <span>Страница {{ page }} из {{ pages }}</span>
+  {% if page < pages %}<a class="button" href="?page={{ page + 1 }}">Следующая →</a>{% endif %}
+</nav>
+{% endif %}
+</section>
+{% endblock %}
