@@ -58,6 +58,16 @@ class QueueCipher:
         )
         return json.loads(plaintext.decode("utf-8"))
 
+    def reference(self, fields: dict[str, Any]) -> str:
+        """Stable, non-reversible submission reference for the send history and the CMS API."""
+        tranid = str(fields.get("tranid", "")).strip()
+        if not tranid:
+            return ""
+        return self.reference_for(tranid)
+
+    def reference_for(self, tranid: str) -> str:
+        return hmac.new(self._dedupe_key, f"history-ref:{tranid}".encode(), hashlib.sha256).hexdigest()[:32]
+
     def dedupe(self, fields: dict[str, Any], event_id: str) -> bytes:
         tranid = str(fields.get("tranid", "")).strip()
         formid = str(fields.get("formid", "")).strip()

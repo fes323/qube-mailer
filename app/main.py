@@ -15,6 +15,8 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
+from app.api import register_api
+from app.autoreply_views import register_autoreply_views
 from app.config import Config
 from app.database import Database
 from app.mailer import MailWorker, parse_recipients
@@ -75,13 +77,15 @@ def create_app(config: Config | None = None) -> FastAPI:
     async def security_headers(request: Request, call_next):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
+        # The letter preview sets its own sandboxed policy and may be framed by the admin page.
+        response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet, noimageindex"
-        response.headers["Content-Security-Policy"] = (
+        response.headers.setdefault(
+            "Content-Security-Policy",
             "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; "
-            "base-uri 'none'; frame-ancestors 'none'"
+            "base-uri 'none'; frame-ancestors 'none'; frame-src 'self'",
         )
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         return response
@@ -209,15 +213,24 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.get("/admin/routes", response_class=HTMLResponse)
     async def routes_page(request: Request, _: str = Depends(require_admin)):
+        cms_forms = database.cms_forms()
+        for form in cms_forms:
+            fields = {key: form[key] for key in ("formid", "formname", "form_route") if form[key]}
+            form["route"] = database.matching_route(fields)
+            form["autoreply"] = database.matching_autoreply(fields)
         return templates.TemplateResponse(request=request, name="routes.html", context={
             "routes": database.get_routes(), "field_catalog": database.field_catalog(),
-            "saved": request.query_params.get("saved") == "1",
+            "saved": request.query_params.get("saved") == "1", "cms_forms": cms_forms,
         })
 
     @app.get("/admin/routes/new", response_class=HTMLResponse)
     async def new_route_page(request: Request, _: str = Depends(require_admin)):
+        query = request.query_params
         return templates.TemplateResponse(request=request, name="route.html", context={
             "route": None, "settings": database.get_settings(), "csrf_token": csrf_token(),
+            "prefill": {"name": query.get("name", "")[:100], "match_field": query.get("match_field", "")[:200],
+                        "match_value": query.get("match_value", "")[:500]},
+            "known": database.known_form_values(),
         })
 
     def require_route(route_id: int):
@@ -228,9 +241,12 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.get("/admin/routes/{route_id}", response_class=HTMLResponse)
     async def route_page(route_id: int, request: Request, _: str = Depends(require_admin)):
+        route = require_route(route_id)
         return templates.TemplateResponse(request=request, name="route.html", context={
-            "route": require_route(route_id), "settings": database.get_settings(),
+            "route": route, "settings": database.get_settings(),
             "csrf_token": csrf_token(), "saved": request.query_params.get("saved") == "1",
+            "known": database.known_form_values(),
+            "autoreply": database.matching_autoreply({route.match_field: route.match_value}),
         })
 
     @app.get("/admin/logs", response_class=HTMLResponse)
@@ -415,6 +431,15 @@ def create_app(config: Config | None = None) -> FastAPI:
             raise HTTPException(status_code=422, detail=str(error)) from error
         return RedirectResponse(f"/admin/routes/{route_id}?saved=1", status_code=303)
 
+    def check_csrf(value: str) -> None:
+        if not _secure_equal(value, csrf_token()):
+            raise HTTPException(status_code=403, detail="Invalid CSRF token")
+
+    register_autoreply_views(
+        app, database=database, worker=worker, templates=templates, require_admin=require_admin,
+        csrf_token=csrf_token, check_csrf=check_csrf, validate_sender_name=validate_sender_name,
+    )
+    register_api(app, config=config, database=database, worker=worker, cipher=cipher)
     return app
 
 

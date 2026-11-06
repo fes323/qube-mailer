@@ -13,12 +13,15 @@
     .card{padding:18px}.metric{font-size:30px;font-weight:750;margin-top:6px}.label{color:var(--muted);font-size:13px}.panel{padding:22px;margin-top:18px}
     .status{display:flex;gap:12px;flex-wrap:wrap}.pill{padding:7px 10px;border-radius:999px;background:#eef2ff;color:#3046a2;font-size:13px}.pill.ok{background:#e9f8ef;color:var(--green)}
     .chart{display:flex;height:150px;align-items:end;gap:7px;border-bottom:1px solid var(--line);padding-top:16px}.bar-wrap{flex:1;text-align:center;min-width:20px}.bar{background:var(--blue);border-radius:5px 5px 0 0;min-height:2px}.day{font-size:10px;color:var(--muted);margin-top:6px;white-space:nowrap}
-    form{display:grid;gap:16px}label{display:grid;gap:7px;font-weight:650}input,textarea{width:100%;padding:11px 12px;border:1px solid #cbd3df;border-radius:8px;background:#fff;color:var(--text);font:inherit}input[type=checkbox]{width:auto}textarea{min-height:86px;resize:vertical}textarea.code{min-height:260px;font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
+    form{display:grid;gap:16px}label{display:grid;gap:7px;font-weight:650;align-content:start}input,textarea{width:100%;padding:11px 12px;border:1px solid #cbd3df;border-radius:8px;background:#fff;color:var(--text);font:inherit}input[type=checkbox]{width:auto}textarea{min-height:86px;resize:vertical}textarea.code{min-height:260px;font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
     input:focus,textarea:focus{outline:3px solid #315efb22;border-color:var(--blue)}button{justify-self:start;border:0;border-radius:8px;background:var(--blue);color:#fff;padding:11px 18px;font-weight:700;cursor:pointer}.danger{background:var(--red)}.buttons{display:flex;gap:10px;flex-wrap:wrap}.check{display:flex;align-items:center;gap:9px}.hint{color:var(--muted);font-size:13px;font-weight:400}.flash{background:#e9f8ef;color:var(--green);padding:11px 14px;border-radius:8px;margin-bottom:16px}
     .route,.catalog-form{border:1px solid var(--line);border-radius:10px;padding:18px;margin-top:14px}.route h3,.catalog-form h3{margin:0 0 14px;font-size:16px}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}.field-list{display:flex;flex-wrap:wrap;gap:8px}.field{background:#f5f7fb;border:1px solid var(--line);border-radius:7px;padding:7px 9px}.meta{color:var(--muted);font-size:12px;margin-top:4px}
     code{background:#eef1f6;padding:2px 5px;border-radius:4px}@media(max-width:760px){.cards{grid-template-columns:repeat(2,1fr)}.grid2{grid-template-columns:1fr}.day{display:none}}@media(max-width:440px){.cards{grid-template-columns:1fr}}
     nav{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:24px}a{color:var(--blue)}nav a,.button{display:inline-block;padding:10px 14px;border:1px solid var(--line);border-radius:8px;text-decoration:none;background:#fff}nav a[aria-current=page]{background:var(--blue);color:#fff}.table-scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;text-align:left}th,td{padding:12px;border-bottom:1px solid var(--line);vertical-align:top}td{overflow-wrap:anywhere;min-width:100px;max-width:400px}.error{color:var(--red);background:#fff0ee;padding:14px;border-radius:8px}select{padding:11px;border:1px solid var(--line);border-radius:8px;background:#fff;font:inherit}.journal td{white-space:pre-wrap;font-size:13px}
-    .pagination{align-items:center;margin:16px 0}.pagination [aria-disabled=true]{color:var(--muted);background:var(--bg)}
+    .pagination{align-items:center;margin:16px 0}
+    .tag{display:inline-block;padding:3px 8px;font-size:12px;border:1px solid var(--line);background:#f5f7fb;white-space:nowrap}.tag.sent{background:#e9f8ef;color:var(--green);border-color:#bfe6cf}.tag.failed,.tag.expired{background:#fff0ee;color:var(--red);border-color:#f3c4bd}.tag.retrying,.tag.queued{background:#fff7e6;color:#8a5a00;border-color:#f0d9a8}
+    .preview{width:100%;height:640px;border:1px solid var(--line);background:#fff}.filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;align-items:end}.files{display:grid;gap:8px;margin:0;padding:0;list-style:none}.files li{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.files .check{font-weight:400}
+    .radio{display:flex;gap:18px;flex-wrap:wrap;font-weight:400}.radio label{display:flex;gap:8px;align-items:center;font-weight:400}.radio input{width:auto}.pagination [aria-disabled=true]{color:var(--muted);background:var(--bg)}
   </style>
 </head>
 <body>
@@ -26,7 +29,9 @@
   <nav aria-label="Навигация">
     <a href="/admin" {% if request.url.path == '/admin' %}aria-current="page"{% endif %}>Общие настройки</a>
     <a href="/admin/routes" {% if request.url.path.startswith('/admin/routes') %}aria-current="page"{% endif %}>Формы и маршруты</a>
-    <a href="/admin/logs" {% if request.url.path == '/admin/logs' %}aria-current="page"{% endif %}>Журнал отправок</a>
+    <a href="/admin/autoreplies" {% if request.url.path.startswith('/admin/autoreplies') %}aria-current="page"{% endif %}>Отбивки</a>
+    <a href="/admin/history" {% if request.url.path == '/admin/history' %}aria-current="page"{% endif %}>История писем</a>
+    <a href="/admin/logs" {% if request.url.path == '/admin/logs' %}aria-current="page"{% endif %}>Журнал SMTP.bz</a>
   </nav>
   {% block content %}{% endblock %}
 </main>

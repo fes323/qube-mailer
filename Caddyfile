@@ -19,7 +19,13 @@
         }
     }
 
-    request_body {
+    # Autoreply attachments: up to 15 MB in one admin form. Everything else stays at 1 MB.
+    @uploads path /admin/autoreplies /admin/autoreplies/*
+    @small not path /admin/autoreplies /admin/autoreplies/*
+    request_body @uploads {
+        max_size 20MB
+    }
+    request_body @small {
         max_size 1MB
     }
 

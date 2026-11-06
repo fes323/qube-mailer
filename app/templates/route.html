@@ -5,8 +5,9 @@
 <h1>{{ 'Добавить маршрут' if is_new else route.name }}</h1>
 <p class="lead"><a href="/admin/routes">← Все формы и маршруты</a></p>
 {% if saved %}<div class="flash" role="status">Настройки сохранены.</div>{% endif %}
+{% if not is_new %}<p class="hint">Отбивка заявителю для этой формы: {% if autoreply %}<a href="/admin/autoreplies/{{ autoreply.id }}">{{ autoreply.name }}</a>{% else %}нет · <a href="/admin/autoreplies/new?match_field={{ route.match_field|urlencode }}&amp;match_value={{ route.match_value|urlencode }}&amp;name={{ ('Отбивка: ' ~ route.name)|urlencode }}">создать</a>{% endif %}</p>{% endif %}
 {% if is_new %}
-{% set route = dict(name='', match_field='formid', match_value='', recipients=settings.recipients, subject_template=settings.subject_template, email_template=settings.email_template, sender_name='', enabled=true) %}
+{% set route = dict(name=prefill.name, match_field=prefill.match_field or 'formid', match_value=prefill.match_value, recipients=settings.recipients, subject_template=settings.subject_template, email_template=settings.email_template, sender_name='', enabled=true) %}
 {% endif %}
 <section class="panel">
 <p class="hint">Укажите поле формы и его точное значение. Можно использовать formid, formname или собственное скрытое поле.</p>
@@ -22,12 +23,14 @@
           Маршрут включён
         </label>
         <label>Поле для сравнения
-          <input type="text" name="match_field" maxlength="200" required value="{{ route.match_field }}">
+          <input type="text" name="match_field" maxlength="200" required list="match-fields" value="{{ route.match_field }}">
         </label>
         <label>Точное значение
-          <input type="text" name="match_value" maxlength="500" required value="{{ route.match_value }}">
+          <input type="text" name="match_value" maxlength="500" required list="match-values" value="{{ route.match_value }}">
         </label>
       </div>
+      <datalist id="match-fields"><option value="formid"><option value="form_route"><option value="formname"></datalist>
+      <datalist id="match-values">{% for key, items in known.items() %}{% for item in items %}<option value="{{ item }}" label="{{ key }}">{% endfor %}{% endfor %}</datalist>
       <label>Получатели
         <textarea name="recipients" required>{{ route.recipients }}</textarea>
       </label>

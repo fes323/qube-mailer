@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
 import time
@@ -46,6 +47,38 @@ STAT_COLUMNS = {
 }
 
 FIELD_CATALOG_MAX_ENTRIES = 5_000
+CMS_FORMS_MAX_ENTRIES = 2_000
+ANY_FORM = "*"
+HISTORY_KINDS = {"notification", "autoreply", "test"}
+HISTORY_STATUSES = {"queued", "retrying", "sent", "failed", "skipped", "expired"}
+
+DEFAULT_AUTOREPLY_TEMPLATE = """\
+<!doctype html>
+<html lang="ru">
+  <body style="margin:0;padding:0;background:#f2f2f2;font-family:Arial,Helvetica,sans-serif;color:#111">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f2f2f2">
+      <tr><td align="center" style="padding:32px 12px">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0"
+               style="width:100%;max-width:600px;background:#ffffff;border-top:8px solid #111">
+          <tr><td style="padding:32px 32px 8px;font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:#555">
+            QUBE
+          </td></tr>
+          <tr><td style="padding:0 32px 16px;font-size:24px;line-height:1.3;font-weight:bold">
+            Спасибо, {{ Name }}! Мы получили вашу заявку
+          </td></tr>
+          <tr><td style="padding:0 32px 24px;font-size:15px;line-height:1.6">
+            Форма «{{ formname }}» отправлена. Мы свяжемся с вами в ближайшее время.
+          </td></tr>
+          <tr><td style="padding:0 32px 32px">{{ fields_table }}</td></tr>
+          <tr><td style="padding:16px 32px;background:#111;color:#fff;font-size:12px">
+            Это автоматическое письмо. Ответьте на него, если хотите что-то уточнить.
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +115,55 @@ class MailRoute:
     email_template: str
     enabled: bool
     sender_name: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class Autoreply:
+    id: int
+    name: str
+    enabled: bool
+    match_field: str
+    match_value: str
+    email_field: str
+    sender_name: str
+    reply_to: str
+    subject_template: str
+    html_template: str
+    text_template: str
+
+    @property
+    def any_form(self) -> bool:
+        return self.match_field == ANY_FORM
+
+
+@dataclass(frozen=True, slots=True)
+class Attachment:
+    id: int
+    autoreply_id: int
+    filename: str
+    content_type: str
+    size: int
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class HistoryPage:
+    rows: list[dict[str, Any]]
+    total: int
+
+
+AUTOREPLY_COLUMNS = (
+    "name", "enabled", "match_field", "match_value", "email_field", "sender_name",
+    "reply_to", "subject_template", "html_template", "text_template",
+)
+
+
+def _matches(match_field: str, match_value: str, fields: Mapping[str, Any]) -> bool:
+    if match_field not in fields:
+        return False
+    raw_value = fields[match_field]
+    values = raw_value if isinstance(raw_value, list) else [raw_value]
+    return any(str(value).strip() == match_value for value in values)
 
 
 class Database:
@@ -187,6 +269,7 @@ class Database:
                     )
                     """
                 )
+                self._create_autoreply_tables(connection)
                 route_columns = {row["name"] for row in connection.execute("PRAGMA table_info(mail_routes)")}
                 if "sender_name" not in route_columns:
                     connection.execute("ALTER TABLE mail_routes ADD COLUMN sender_name TEXT NOT NULL DEFAULT ''")
@@ -207,6 +290,92 @@ class Database:
             os.chmod(self.path, 0o600)
         except OSError:
             pass
+
+    @staticmethod
+    def _create_autoreply_tables(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS autoreplies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+                match_field TEXT NOT NULL,
+                match_value TEXT NOT NULL,
+                email_field TEXT NOT NULL DEFAULT '',
+                sender_name TEXT NOT NULL DEFAULT '',
+                reply_to TEXT NOT NULL DEFAULT '',
+                subject_template TEXT NOT NULL,
+                html_template TEXT NOT NULL,
+                text_template TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                UNIQUE(match_field, match_value)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS autoreply_attachments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                autoreply_id INTEGER NOT NULL,
+                filename TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                sha256 TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                deleted_at REAL
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS autoreply_attachments_idx "
+            "ON autoreply_attachments(autoreply_id, deleted_at)"
+        )
+        # Send history: metadata only. Field values and letter bodies are never stored.
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mail_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                delivery_key TEXT UNIQUE,
+                kind TEXT NOT NULL,
+                rule_id INTEGER,
+                rule_name TEXT NOT NULL DEFAULT '',
+                recipient TEXT NOT NULL DEFAULT '',
+                subject TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                error TEXT NOT NULL DEFAULT '',
+                attachments INTEGER NOT NULL DEFAULT 0,
+                submission_ref TEXT NOT NULL DEFAULT '',
+                form_key TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )
+            """
+        )
+        connection.execute("CREATE INDEX IF NOT EXISTS mail_history_created_idx ON mail_history(created_at DESC)")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS mail_history_recipient_idx ON mail_history(recipient COLLATE NOCASE)"
+        )
+        connection.execute("CREATE INDEX IF NOT EXISTS mail_history_ref_idx ON mail_history(submission_ref)")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS mail_history_rule_idx ON mail_history(kind, rule_id, created_at DESC)"
+        )
+        # Forms published in QUBE CMS (pushed through /api/v1/forms): identifiers and titles only.
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cms_forms (
+                formid TEXT PRIMARY KEY,
+                formname TEXT NOT NULL DEFAULT '',
+                form_route TEXT NOT NULL DEFAULT '',
+                kind_label TEXT NOT NULL DEFAULT '',
+                page_url TEXT NOT NULL DEFAULT '',
+                admin_url TEXT NOT NULL DEFAULT '',
+                position INTEGER NOT NULL DEFAULT 0,
+                synced_at REAL NOT NULL
+            )
+            """
+        )
 
     @staticmethod
     def _migrate_stat_columns(connection: sqlite3.Connection) -> None:
@@ -273,11 +442,7 @@ class Database:
 
     def matching_route(self, fields: Mapping[str, Any]) -> MailRoute | None:
         for route in self.get_routes():
-            if not route.enabled or route.match_field not in fields:
-                continue
-            raw_value = fields[route.match_field]
-            values = raw_value if isinstance(raw_value, list) else [raw_value]
-            if any(str(value).strip() == route.match_value for value in values):
+            if route.enabled and _matches(route.match_field, route.match_value, fields):
                 return route
         return None
 
@@ -685,3 +850,342 @@ class Database:
             ).fetchall()
         totals = {key: int(totals_row[key]) for key in STAT_COLUMNS}
         return totals, [dict(row) for row in rows]
+
+    # --- Autoreplies («отбивки») -------------------------------------------------
+
+    @staticmethod
+    def _autoreply(row: sqlite3.Row) -> Autoreply:
+        return Autoreply(
+            id=int(row["id"]), name=row["name"], enabled=bool(row["enabled"]),
+            match_field=row["match_field"], match_value=row["match_value"],
+            email_field=row["email_field"], sender_name=row["sender_name"], reply_to=row["reply_to"],
+            subject_template=row["subject_template"], html_template=row["html_template"],
+            text_template=row["text_template"],
+        )
+
+    def get_autoreplies(self, *, limit: int = 1000, offset: int = 0) -> list[Autoreply]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM autoreplies ORDER BY id LIMIT ? OFFSET ?", (limit, offset)
+            ).fetchall()
+        return [self._autoreply(row) for row in rows]
+
+    def count_autoreplies(self) -> int:
+        with self._connect() as connection:
+            return int(connection.execute("SELECT COUNT(*) FROM autoreplies").fetchone()[0])
+
+    def get_autoreply(self, autoreply_id: int) -> Autoreply | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM autoreplies WHERE id=?", (autoreply_id,)).fetchone()
+        return self._autoreply(row) if row else None
+
+    def matching_autoreply(self, fields: Mapping[str, Any]) -> Autoreply | None:
+        """A rule for this exact form wins; a rule for «all forms» is the fallback."""
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM autoreplies WHERE enabled=1 ORDER BY id").fetchall()
+        rules = [self._autoreply(row) for row in rows]
+        for rule in rules:
+            if not rule.any_form and _matches(rule.match_field, rule.match_value, fields):
+                return rule
+        return next((rule for rule in rules if rule.any_form), None)
+
+    def save_autoreply(self, autoreply_id: int | None, values: Mapping[str, Any]) -> int:
+        now = time.time()
+        params = [int(values[key]) if key == "enabled" else values[key] for key in AUTOREPLY_COLUMNS]
+        try:
+            with self._connect() as connection:
+                if autoreply_id is None:
+                    placeholders = ", ".join("?" for _ in AUTOREPLY_COLUMNS)
+                    cursor = connection.execute(
+                        f"INSERT INTO autoreplies({', '.join(AUTOREPLY_COLUMNS)}, created_at, updated_at) "
+                        f"VALUES ({placeholders}, ?, ?)",
+                        (*params, now, now),
+                    )
+                    return int(cursor.lastrowid)
+                assignments = ", ".join(f"{key}=?" for key in AUTOREPLY_COLUMNS)
+                cursor = connection.execute(
+                    f"UPDATE autoreplies SET {assignments}, updated_at=? WHERE id=?",
+                    (*params, now, autoreply_id),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("Отбивка не найдена")
+                return autoreply_id
+        except sqlite3.IntegrityError as error:
+            raise ValueError("Отбивка для такой формы уже существует") from error
+
+    def delete_autoreply(self, autoreply_id: int) -> None:
+        now = time.time()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                connection.execute("DELETE FROM autoreplies WHERE id=?", (autoreply_id,))
+                # Files stay until queued letters that reference them have expired.
+                connection.execute(
+                    "UPDATE autoreply_attachments SET deleted_at=? WHERE autoreply_id=? AND deleted_at IS NULL",
+                    (now, autoreply_id),
+                )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
+    # --- Attachments: content-addressed files next to the database ---------------
+
+    @property
+    def attachments_dir(self) -> Path:
+        return self.path.parent / "attachments"
+
+    def attachment_path(self, sha256: str) -> Path:
+        if len(sha256) != 64 or any(char not in "0123456789abcdef" for char in sha256):
+            raise ValueError("Invalid attachment reference")
+        return self.attachments_dir / sha256
+
+    def add_attachment(self, autoreply_id: int, filename: str, content_type: str, data: bytes) -> Attachment:
+        digest = hashlib.sha256(data).hexdigest()
+        target = self.attachment_path(digest)
+        if not target.exists():
+            self.attachments_dir.mkdir(parents=True, exist_ok=True)
+            temporary = target.with_name(f".{digest}.{os.getpid()}.tmp")
+            temporary.write_bytes(data)
+            os.replace(temporary, target)
+        now = time.time()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "INSERT INTO autoreply_attachments(autoreply_id, filename, content_type, size, sha256, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (autoreply_id, filename, content_type, len(data), digest, now),
+            )
+        return Attachment(int(cursor.lastrowid), autoreply_id, filename, content_type, len(data), digest)
+
+    def get_attachments(self, autoreply_id: int) -> list[Attachment]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM autoreply_attachments WHERE autoreply_id=? AND deleted_at IS NULL ORDER BY id",
+                (autoreply_id,),
+            ).fetchall()
+        return [
+            Attachment(int(row["id"]), int(row["autoreply_id"]), row["filename"], row["content_type"],
+                       int(row["size"]), row["sha256"])
+            for row in rows
+        ]
+
+    def attachment_counts(self) -> dict[int, int]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT autoreply_id, COUNT(*) total FROM autoreply_attachments "
+                "WHERE deleted_at IS NULL GROUP BY autoreply_id"
+            ).fetchall()
+        return {int(row["autoreply_id"]): int(row["total"]) for row in rows}
+
+    def remove_attachments(self, autoreply_id: int, attachment_ids: list[int]) -> None:
+        if not attachment_ids:
+            return
+        with self._connect() as connection:
+            connection.executemany(
+                "UPDATE autoreply_attachments SET deleted_at=? WHERE id=? AND autoreply_id=? AND deleted_at IS NULL",
+                [(time.time(), attachment_id, autoreply_id) for attachment_id in attachment_ids],
+            )
+
+    def purge_attachments(self, keep_seconds: int) -> int:
+        """Forget removed attachments once no queued letter can still reference them."""
+        cutoff = time.time() - keep_seconds
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                candidates = {
+                    row["sha256"]
+                    for row in connection.execute(
+                        "SELECT sha256 FROM autoreply_attachments WHERE deleted_at IS NOT NULL AND deleted_at <= ?",
+                        (cutoff,),
+                    )
+                }
+                connection.execute(
+                    "DELETE FROM autoreply_attachments WHERE deleted_at IS NOT NULL AND deleted_at <= ?", (cutoff,)
+                )
+                in_use = {
+                    row["sha256"]
+                    for row in connection.execute("SELECT DISTINCT sha256 FROM autoreply_attachments")
+                }
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        removed = 0
+        for digest in candidates - in_use:
+            try:
+                self.attachment_path(digest).unlink()
+                removed += 1
+            except FileNotFoundError:
+                pass
+        return removed
+
+    # --- Send history --------------------------------------------------------------
+
+    def history_open(
+        self, *, delivery_key: str | None, kind: str, recipient: str, subject: str = "",
+        rule_id: int | None = None, rule_name: str = "", status: str = "queued", error: str = "",
+        attachments: int = 0, submission_ref: str = "", form_key: str = "",
+    ) -> int:
+        """Idempotent per delivery_key: a replanned delivery reuses its rows."""
+        if kind not in HISTORY_KINDS or status not in HISTORY_STATUSES:
+            raise ValueError("Unknown history kind or status")
+        now = time.time()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO mail_history(
+                    delivery_key, kind, rule_id, rule_name, recipient, subject, status, error,
+                    attachments, submission_ref, form_key, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (delivery_key, kind, rule_id, rule_name[:200], recipient[:320], subject[:250], status,
+                 error[:120], attachments, submission_ref, form_key[:300], now, now),
+            )
+            if cursor.rowcount == 1:
+                return int(cursor.lastrowid)
+            row = connection.execute(
+                "SELECT id FROM mail_history WHERE delivery_key=?", (delivery_key,)
+            ).fetchone()
+            return int(row["id"])
+
+    def history_update(self, history_id: int | None, *, status: str, error: str = "", subject: str | None = None) -> None:
+        if history_id is None:
+            return
+        if status not in HISTORY_STATUSES:
+            raise ValueError("Unknown history status")
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE mail_history SET status=?, error=?, attempts=attempts+1, updated_at=?, "
+                "subject=COALESCE(?, subject) WHERE id=?",
+                (status, error[:120], time.time(), subject[:250] if subject is not None else None, history_id),
+            )
+
+    def history_page(
+        self, *, kind: str = "", status: str = "", rule_id: int | None = None, recipient: str = "",
+        submission_ref: str = "", start: float | None = None, end: float | None = None,
+        limit: int = 50, offset: int = 0,
+    ) -> HistoryPage:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if kind:
+            clauses.append("kind=?")
+            params.append(kind)
+        if status:
+            clauses.append("status=?")
+            params.append(status)
+        if rule_id is not None:
+            clauses.append("rule_id=? AND kind IN ('autoreply', 'test')")
+            params.append(rule_id)
+        if recipient:
+            escaped = recipient.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            clauses.append("recipient LIKE ? ESCAPE '\\'")
+            params.append(escaped + "%")
+        if submission_ref:
+            clauses.append("submission_ref=?")
+            params.append(submission_ref)
+        if start is not None:
+            clauses.append("created_at>=?")
+            params.append(start)
+        if end is not None:
+            clauses.append("created_at<?")
+            params.append(end)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as connection:
+            total = int(connection.execute(f"SELECT COUNT(*) FROM mail_history {where}", params).fetchone()[0])
+            rows = connection.execute(
+                f"SELECT * FROM mail_history {where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                (*params, limit, offset),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item.pop("delivery_key", None)
+            item["created"] = datetime.fromtimestamp(item["created_at"], UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+            item["updated"] = datetime.fromtimestamp(item["updated_at"], UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+            result.append(item)
+        return HistoryPage(result, total)
+
+    def autoreply_sent_counts(self, days: int = 30) -> dict[int, int]:
+        since = time.time() - days * 86400
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT rule_id, COUNT(*) total FROM mail_history "
+                "WHERE kind='autoreply' AND status='sent' AND created_at>=? GROUP BY rule_id",
+                (since,),
+            ).fetchall()
+        return {int(row["rule_id"]): int(row["total"]) for row in rows if row["rule_id"] is not None}
+
+    def purge_history(self, *, retention_seconds: int, queue_retention_seconds: int) -> None:
+        now = time.time()
+        with self._connect() as connection:
+            # Letters still unsent after the queue TTL were dropped together with the ciphertext.
+            connection.execute(
+                "UPDATE mail_history SET status='expired', updated_at=? "
+                "WHERE status IN ('queued', 'retrying') AND created_at<=?",
+                (now, now - queue_retention_seconds - 3600),
+            )
+            connection.execute("DELETE FROM mail_history WHERE created_at<=?", (now - retention_seconds,))
+
+    # --- Forms catalogue pushed by QUBE CMS --------------------------------------
+
+    def replace_cms_forms(self, forms: list[dict[str, str]]) -> None:
+        now = time.time()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                connection.execute("DELETE FROM cms_forms")
+                connection.executemany(
+                    "INSERT OR REPLACE INTO cms_forms(formid, formname, form_route, kind_label, page_url, "
+                    "admin_url, position, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        (form["formid"], form["formname"], form["form_route"], form["kind_label"],
+                         form["page_url"], form["admin_url"], position, now)
+                        for position, form in enumerate(forms)
+                    ],
+                )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
+    def cms_forms(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM cms_forms ORDER BY position").fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["synced"] = datetime.fromtimestamp(item["synced_at"], UTC).strftime("%Y-%m-%d %H:%M UTC")
+            result.append(item)
+        return result
+
+    def known_form_values(self) -> dict[str, list[str]]:
+        """Suggestions for the «field = value» condition: formid, formname and form_route."""
+        values: dict[str, set[str]] = {"formid": set(), "formname": set(), "form_route": set()}
+        with self._connect() as connection:
+            for row in connection.execute("SELECT formid, formname, form_route FROM cms_forms"):
+                for key in values:
+                    if row[key]:
+                        values[key].add(row[key])
+            for row in connection.execute("SELECT DISTINCT form_id, form_name FROM form_field_catalog"):
+                if row["form_id"]:
+                    values["formid"].add(row["form_id"])
+                if row["form_name"]:
+                    values["formname"].add(row["form_name"])
+        return {key: sorted(items) for key, items in values.items()}
+
+    def form_field_names(self, match_field: str, match_value: str) -> list[str]:
+        """Variable names seen for one form; used for previews and test letters."""
+        with self._connect() as connection:
+            if match_field == "formid":
+                rows = connection.execute(
+                    "SELECT DISTINCT field_name FROM form_field_catalog WHERE form_id=? ORDER BY field_name",
+                    (match_value,),
+                ).fetchall()
+            elif match_field == "formname":
+                rows = connection.execute(
+                    "SELECT DISTINCT field_name FROM form_field_catalog WHERE form_name=? ORDER BY field_name",
+                    (match_value,),
+                ).fetchall()
+            else:
+                rows = []
+        return [row["field_name"] for row in rows]
