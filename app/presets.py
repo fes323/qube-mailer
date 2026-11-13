@@ -52,7 +52,7 @@ a { color: #67269a; }
   </tr>
   <tr>
     <td colspan="2" class="pad" bgcolor="#0b1725" style="padding:26px 42px 24px 42px;border-bottom:1px solid #293044">
-      <a href="https://qube-expo.ru/" target="_blank" style="text-decoration:none"><img src="https://upload.qube-expo.ru/Images/logo.png" width="230" alt="КЬЮБ ЭКСПО | QUBE EXPO" style="display:block;width:230px;max-width:100%;height:auto;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:18px;font-weight:bold"></a>
+      <a href="https://qube-expo.ru/" target="_blank" style="text-decoration:none"><img src="https://qube-expo.ru/static/content/brand/qube-expo-logo-email.png" width="260" alt="КЬЮБ ЭКСПО | QUBE EXPO" style="display:block;width:260px;max-width:100%;height:auto;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:18px;font-weight:bold"></a>
     </td>
   </tr>
   <tr>
