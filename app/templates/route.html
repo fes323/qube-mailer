@@ -32,7 +32,8 @@
       <datalist id="match-fields"><option value="formid"><option value="form_route"><option value="formname"></datalist>
       <datalist id="match-values">{% for key, items in known.items() %}{% for item in items %}<option value="{{ item }}" label="{{ key }}">{% endfor %}{% endfor %}</datalist>
       <label>Получатели
-        <textarea name="recipients" required>{{ route.recipients }}</textarea>
+        <textarea name="recipients">{{ route.recipients }}</textarea>
+        <span class="hint">Оставьте пустым и снимите «Также отправлять получателям по умолчанию», чтобы организаторам письмо не приходило, а отбивка заявителю отправлялась. Не выключайте маршрут для этого: выключенный маршрут отправляет заявку получателям по умолчанию.</span>
       </label>
       <label class="check">
         <input type="checkbox" name="include_default" value="1" {% if route.include_default %}checked{% endif %}>

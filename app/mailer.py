@@ -163,7 +163,9 @@ class MailWorker:
     def _plan(self, item: OutboxItem, submission: Submission) -> dict[str, Any]:
         """Freeze who receives what. History rows are idempotent per outbox item."""
         settings = self._settings(submission)
-        pending = parse_recipients(settings["recipients"])
+        # A route with no addresses (and without the defaults) sends the autoreply only.
+        silent_route = settings.get("route_id") is not None and not settings["recipients"].strip()
+        pending = [] if silent_route else parse_recipients(settings["recipients"])
         reference = self.cipher.reference(submission.fields)
         form_key = str(submission.fields.get("formid") or submission.fields.get("formname") or "")[:300]
         common = {"submission_ref": reference, "form_key": form_key}
