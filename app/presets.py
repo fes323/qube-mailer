@@ -8,11 +8,17 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-# Forms whose submitter already gets a letter from the site itself (program PDF, partner hotels).
+if TYPE_CHECKING:
+    from app.database import Database
+
+LETTERS = Path(__file__).with_name("preset_letters")
+
+# Forms whose submitter already gets a letter from the site itself (the programme PDF).
 # The «all forms» autoreply would be a second letter to the same person, so it skips them.
-SITE_REPLY_ROUTES = frozenset({"hotel_booking", "program_pdf"})
+SITE_REPLY_ROUTES = frozenset({"program_pdf"})
 
 HOTEL_BOOKING_TEMPLATE = """\
 <!DOCTYPE html>
@@ -71,7 +77,7 @@ a { color: #67269a; }
     <td colspan="2" class="pad" bgcolor="#ffffff" style="padding:22px 42px 8px 42px;font-family:Arial,Helvetica,sans-serif">
       <table role="presentation" width="100%" border="0" cellpadding="0" cellspacing="0">
         <tr><td bgcolor="#f3f2f6" style="padding:16px 18px;border-left:4px solid #1be39b;color:#25222a;font-size:14px;line-height:21px">
-          Гость уже получил письмо сайта с условиями отелей-партнёров и PDF во вложении: Radisson Blu Олимпийский, Solux Hotel Moscow и 1 Арт Отель. Нажмите «Ответить», чтобы написать гостю: ответ уйдёт на его почту.
+          Гость уже получил отбивку с условиями отелей-партнёров и PDF во вложении: Radisson Blu Олимпийский, Solux Hotel Moscow и 1 Арт Отель. Нажмите «Ответить», чтобы написать гостю: ответ уйдёт на его почту.
         </td></tr>
       </table>
     </td>
@@ -136,6 +142,23 @@ HOTEL_BOOKING_SAMPLE: dict[str, Any] = {
     "entry_path": "/visit/",
 }
 
+# Letter to the guest: the owner's text and layout moved over from the site letter (RU), with the PDF.
+HOTEL_BOOKING_AUTOREPLY = {
+    "name": "Бронирование гостиницы: письмо гостю",
+    "enabled": True,
+    "match_field": "form_route",
+    "match_value": "hotel_booking",
+    "email_field": "",
+    "sender_name": "QUBE EXPO",
+    "reply_to": "show.director@qube-expo.ru",
+    "subject_template": "QUBE EXPO 2026: специальные условия бронирования в отелях-партнёрах",
+    "html_file": "hotel_booking_guest.html",
+    "text_template": "",
+    "attachments": [("Qube_Expo_special_hotel_booking.pdf", "application/pdf")],
+}
+
+AUTOREPLY_PRESETS = {"preset_autoreply_hotel_booking": HOTEL_BOOKING_AUTOREPLY}
+
 SAMPLES = {("form_route", "hotel_booking"): HOTEL_BOOKING_SAMPLE}
 
 
@@ -165,3 +188,22 @@ def seed_presets(connection: sqlite3.Connection) -> None:
                 int(route["include_default"]),
             ),
         )
+
+
+def seed_autoreplies(database: Database) -> None:
+    """Create each preset autoreply with its attachments once; a deleted one never comes back."""
+    for flag, preset in AUTOREPLY_PRESETS.items():
+        settings = database.get_settings()
+        if flag in settings:
+            continue
+        exists = any(
+            rule.match_field == preset["match_field"] and rule.match_value == preset["match_value"]
+            for rule in database.get_autoreplies()
+        )
+        if not exists:
+            values = {key: value for key, value in preset.items() if key not in {"html_file", "attachments"}}
+            values["html_template"] = (LETTERS / preset["html_file"]).read_text(encoding="utf-8")
+            rule_id = database.save_autoreply(None, values)
+            for filename, content_type in preset["attachments"]:
+                database.add_attachment(rule_id, filename, content_type, (LETTERS / filename).read_bytes())
+        database.set_flag(flag)
