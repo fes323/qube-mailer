@@ -11,7 +11,7 @@
 <div class="table-scroll"><table>
 <thead><tr><th>Название</th><th>Условие</th><th>Получатели</th><th>Состояние</th></tr></thead>
 <tbody>{% for route in routes %}
-<tr><td><a href="/admin/routes/{{ route.id }}">{{ route.name }}</a></td><td><code>{{ route.match_field }}</code> = {{ route.match_value }}</td><td>{{ route.recipients }}</td><td>{{ 'Включён' if route.enabled else 'Выключен' }}</td></tr>
+<tr><td><a href="/admin/routes/{{ route.id }}">{{ route.name }}</a></td><td><code>{{ route.match_field }}</code> = {{ route.match_value }}</td><td>{{ route.recipients }}{% if route.include_default %} + по умолчанию{% endif %}</td><td>{{ 'Включён' if route.enabled else 'Выключен' }}</td></tr>
 {% else %}<tr><td colspan="4">Маршрутов пока нет. Все заявки используют письмо по умолчанию.</td></tr>{% endfor %}</tbody>
 </table></div>
 </section>
