@@ -20,8 +20,10 @@ from app.autoreply_views import register_autoreply_views
 from app.config import Config
 from app.database import Database
 from app.mailer import MailWorker, parse_recipients
+from app.presets import SAMPLES
 from app.queue_crypto import QueueCipher
 from app.smtp_bz import JournalError, fetch_message_page, journal_table
+from app.templating import render_html
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
@@ -249,6 +251,24 @@ def create_app(config: Config | None = None) -> FastAPI:
             "autoreply": database.matching_autoreply({route.match_field: route.match_value}),
         })
 
+    @app.get("/admin/routes/{route_id}/preview", response_class=HTMLResponse)
+    async def route_preview(route_id: int, _: str = Depends(require_admin)):
+        route = require_route(route_id)
+        fields = SAMPLES.get((route.match_field, route.match_value))
+        if fields is None:
+            names = database.form_field_names(route.match_field, route.match_value) or ["Name", "Email", "Phone"]
+            fields = {name: f"[{name}]" for name in names}
+        received = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+        body = render_html(route.email_template, fields, received, show_missing=True)
+        response = HTMLResponse(body)
+        # Shown inside the admin page only; scripts and forms of the layout never run.
+        response.headers["Content-Security-Policy"] = (
+            "sandbox; default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; "
+            "font-src https: data:; frame-ancestors 'self'"
+        )
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        return response
+
     @app.get("/admin/logs", response_class=HTMLResponse)
     async def logs_page(
         request: Request, _: str = Depends(require_admin),
@@ -375,6 +395,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         email_template: str = Form(...),
         enabled: str | None = Form(None),
         sender_name: str = Form(""),
+        include_default: str | None = Form(None),
     ):
         if not _secure_equal(csrf, csrf_token()):
             raise HTTPException(status_code=403, detail="Invalid CSRF token")
@@ -389,6 +410,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         try:
             route_id = database.create_route(
                 **values, enabled=enabled == "1", sender_name=validate_sender_name(sender_name),
+                include_default=include_default == "1",
             )
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
@@ -408,6 +430,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         email_template: str = Form(...),
         enabled: str | None = Form(None),
         sender_name: str = Form(""),
+        include_default: str | None = Form(None),
     ):
         if not _secure_equal(csrf, csrf_token()):
             raise HTTPException(status_code=403, detail="Invalid CSRF token")
@@ -426,6 +449,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         try:
             database.update_route(
                 route_id, **values, enabled=enabled == "1", sender_name=validate_sender_name(sender_name),
+                include_default=include_default == "1",
             )
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error

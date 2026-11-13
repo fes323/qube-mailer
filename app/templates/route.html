@@ -7,7 +7,7 @@
 {% if saved %}<div class="flash" role="status">Настройки сохранены.</div>{% endif %}
 {% if not is_new %}<p class="hint">Отбивка заявителю для этой формы: {% if autoreply %}<a href="/admin/autoreplies/{{ autoreply.id }}">{{ autoreply.name }}</a>{% else %}нет · <a href="/admin/autoreplies/new?match_field={{ route.match_field|urlencode }}&amp;match_value={{ route.match_value|urlencode }}&amp;name={{ ('Отбивка: ' ~ route.name)|urlencode }}">создать</a>{% endif %}</p>{% endif %}
 {% if is_new %}
-{% set route = dict(name=prefill.name, match_field=prefill.match_field or 'formid', match_value=prefill.match_value, recipients=settings.recipients, subject_template=settings.subject_template, email_template=settings.email_template, sender_name='', enabled=true) %}
+{% set route = dict(name=prefill.name, match_field=prefill.match_field or 'formid', match_value=prefill.match_value, recipients=settings.recipients, subject_template=settings.subject_template, email_template=settings.email_template, sender_name='', enabled=true, include_default=false) %}
 {% endif %}
 <section class="panel">
 <p class="hint">Укажите поле формы и его точное значение. Можно использовать formid, formname или собственное скрытое поле.</p>
@@ -34,6 +34,10 @@
       <label>Получатели
         <textarea name="recipients" required>{{ route.recipients }}</textarea>
       </label>
+      <label class="check">
+        <input type="checkbox" name="include_default" value="1" {% if route.include_default %}checked{% endif %}>
+        Также отправлять получателям по умолчанию (из общих настроек: {{ settings.recipients or 'не заданы' }})
+      </label>
       <label>Имя отправителя
         <input type="text" name="sender_name" maxlength="100" value="{{ route.sender_name }}" placeholder="{{ settings.sender_name }}">
         <span class="hint">Если оставить пустым, используется общее имя отправителя: {{ settings.sender_name or 'не задано' }}.</span>
@@ -51,6 +55,12 @@
       </div>
     </form>
 
-<p class="hint">В теме и HTML доступны переменные формы, например <code>{{ '{{ Name }}' }}</code>. <code>{{ '{{ fields_table }}' }}</code> — таблица полей, <code>{{ '{{ received_at }}' }}</code> — время получения.</p>
+<p class="hint">В теме и HTML доступны переменные формы, например <code>{{ '{{ Name }}' }}</code>. <code>{{ '{{ fields_table }}' }}</code> — таблица полей, <code>{{ '{{ received_at }}' }}</code> — время получения. Для форм QUBE CMS: <code>{{ '{{ answers_table }}' }}</code> — вопросы формы с подписями, <code>{{ '{{ contact_buttons }}' }}</code> — кнопки «Написать» и «Позвонить», <code>{{ '{{ source_table }}' }}</code> — источник и UTM.</p>
 </section>
+{% if route.id %}
+<section class="panel">
+  <h2>Предпросмотр сохранённой версии</h2>
+  <iframe class="preview" title="Предпросмотр письма" src="/admin/routes/{{ route.id }}/preview" sandbox></iframe>
+</section>
+{% endif %}
 {% endblock %}

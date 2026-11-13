@@ -273,9 +273,13 @@ class MailWorker:
         settings: dict[str, Any] = self.database.get_settings()
         route = self.database.matching_route(submission.fields)
         if route is not None:
+            recipients = route.recipients
+            if route.include_default and settings["recipients"].strip():
+                # parse_recipients drops the duplicates of the combined list.
+                recipients = f"{route.recipients}\n{settings['recipients']}"
             settings.update(
                 {
-                    "recipients": route.recipients,
+                    "recipients": recipients,
                     "subject_template": route.subject_template,
                     "email_template": route.email_template,
                     "sender_name": route.sender_name or settings["sender_name"],

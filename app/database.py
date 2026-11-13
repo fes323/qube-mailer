@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.presets import SITE_REPLY_ROUTES, seed_presets
 from app.queue_crypto import EncryptedPayload
 
 DEFAULT_EMAIL_TEMPLATE = """\
@@ -115,6 +116,8 @@ class MailRoute:
     email_template: str
     enabled: bool
     sender_name: str = ""
+    # Also send to the default recipients from the general settings («админы»).
+    include_default: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +167,10 @@ def _matches(match_field: str, match_value: str, fields: Mapping[str, Any]) -> b
     raw_value = fields[match_field]
     values = raw_value if isinstance(raw_value, list) else [raw_value]
     return any(str(value).strip() == match_value for value in values)
+
+
+def _matches_any(match_field: str, match_values: frozenset[str], fields: Mapping[str, Any]) -> bool:
+    return any(_matches(match_field, value, fields) for value in match_values)
 
 
 class Database:
@@ -273,6 +280,10 @@ class Database:
                 route_columns = {row["name"] for row in connection.execute("PRAGMA table_info(mail_routes)")}
                 if "sender_name" not in route_columns:
                     connection.execute("ALTER TABLE mail_routes ADD COLUMN sender_name TEXT NOT NULL DEFAULT ''")
+                if "include_default" not in route_columns:
+                    connection.execute(
+                        "ALTER TABLE mail_routes ADD COLUMN include_default INTEGER NOT NULL DEFAULT 0"
+                    )
                 connection.execute(
                     "CREATE INDEX IF NOT EXISTS field_catalog_last_seen_idx "
                     "ON form_field_catalog(last_seen_at DESC)"
@@ -282,6 +293,7 @@ class Database:
                         "INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)",
                         (key, value),
                     )
+                seed_presets(connection)
                 connection.execute("COMMIT")
             except Exception:
                 connection.execute("ROLLBACK")
@@ -436,6 +448,7 @@ class Database:
                 email_template=row["email_template"],
                 enabled=bool(row["enabled"]),
                 sender_name=row["sender_name"],
+                include_default=bool(row["include_default"]),
             )
             for row in rows
         ]
@@ -460,6 +473,7 @@ class Database:
         email_template: str,
         enabled: bool,
         sender_name: str = "",
+        include_default: bool = False,
     ) -> int:
         now = time.time()
         try:
@@ -468,8 +482,8 @@ class Database:
                     """
                     INSERT INTO mail_routes(
                         name, match_field, match_value, recipients, subject_template,
-                        email_template, enabled, created_at, updated_at, sender_name
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        email_template, enabled, created_at, updated_at, sender_name, include_default
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         name,
@@ -482,6 +496,7 @@ class Database:
                         now,
                         now,
                         sender_name,
+                        int(include_default),
                     ),
                 )
                 return int(cursor.lastrowid)
@@ -500,6 +515,7 @@ class Database:
         email_template: str,
         enabled: bool,
         sender_name: str = "",
+        include_default: bool = False,
     ) -> None:
         try:
             with self._connect() as connection:
@@ -507,7 +523,8 @@ class Database:
                     """
                     UPDATE mail_routes
                     SET name=?, match_field=?, match_value=?, recipients=?,
-                        subject_template=?, email_template=?, enabled=?, updated_at=?, sender_name=?
+                        subject_template=?, email_template=?, enabled=?, updated_at=?, sender_name=?,
+                        include_default=?
                     WHERE id=?
                     """,
                     (
@@ -520,6 +537,7 @@ class Database:
                         int(enabled),
                         time.time(),
                         sender_name,
+                        int(include_default),
                         route_id,
                     ),
                 )
@@ -880,13 +898,18 @@ class Database:
         return self._autoreply(row) if row else None
 
     def matching_autoreply(self, fields: Mapping[str, Any]) -> Autoreply | None:
-        """A rule for this exact form wins; a rule for «all forms» is the fallback."""
+        """A rule for this exact form wins; a rule for «all forms» is the fallback.
+
+        The fallback skips forms whose submitter already gets a letter from the site itself.
+        """
         with self._connect() as connection:
             rows = connection.execute("SELECT * FROM autoreplies WHERE enabled=1 ORDER BY id").fetchall()
         rules = [self._autoreply(row) for row in rows]
         for rule in rules:
             if not rule.any_form and _matches(rule.match_field, rule.match_value, fields):
                 return rule
+        if _matches_any("form_route", SITE_REPLY_ROUTES, fields):
+            return None
         return next((rule for rule in rules if rule.any_form), None)
 
     def save_autoreply(self, autoreply_id: int | None, values: Mapping[str, Any]) -> int:
