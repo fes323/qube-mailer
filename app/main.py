@@ -373,12 +373,14 @@ def create_app(config: Config | None = None) -> FastAPI:
             "email_template": 100_000,
         }
         for key, value in values.items():
-            if not value:
+            # Empty recipients: organisers get nothing for this form, the autoreply still goes out.
+            if not value and key != "recipients":
                 raise HTTPException(status_code=422, detail="Все поля маршрута обязательны")
             if len(value) > limits[key]:
                 raise HTTPException(status_code=422, detail=f"Поле маршрута {key} слишком длинное")
         try:
-            parse_recipients(values["recipients"])
+            if values["recipients"]:
+                parse_recipients(values["recipients"])
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         return values
@@ -390,7 +392,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         name: str = Form(...),
         match_field: str = Form(...),
         match_value: str = Form(...),
-        recipients: str = Form(...),
+        recipients: str = Form(""),
         subject_template: str = Form(...),
         email_template: str = Form(...),
         enabled: str | None = Form(None),
@@ -425,7 +427,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         name: str = Form(...),
         match_field: str = Form(...),
         match_value: str = Form(...),
-        recipients: str = Form(...),
+        recipients: str = Form(""),
         subject_template: str = Form(...),
         email_template: str = Form(...),
         enabled: str | None = Form(None),

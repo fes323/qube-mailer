@@ -140,3 +140,32 @@ def test_route_preview_and_include_default_form(tmp_path, monkeypatch):
         saved = app.state.database.get_route(route.id)
         assert saved.recipients == 'hotels@example.test' and not saved.include_default
         assert '+ по умолчанию' not in client.get('/admin/routes', auth=AUTH).text
+
+
+def test_route_without_recipients_sends_only_the_guest_letter(tmp_path, monkeypatch):
+    cfg, db = setup(tmp_path, monkeypatch)
+    route = hotel_route(db)
+    db.update_route(route.id, name=route.name, match_field=route.match_field, match_value=route.match_value,
+                    recipients='', subject_template=route.subject_template, email_template=route.email_template,
+                    enabled=True, sender_name=route.sender_name, include_default=False)
+    cipher = QueueCipher(cfg.queue_keys, cfg.active_queue_key_version, cfg.queue_dedupe_key)
+    enqueue(db, cipher, 'event-silent', dict(HOTEL_BOOKING_SAMPLE, tranid='qube-2'))
+    asyncio.run(MailWorker(cfg, db, cipher)._process(db.claim_next(300, 600)))
+    assert [to for to, _ in FakeSMTP.sent] == ['anna.smirnova@example.ru']
+    assert db.queue_stats().pending == 0
+
+
+def test_admin_saves_route_with_empty_recipients(tmp_path):
+    app = create_app(config(tmp_path))
+    with TestClient(app) as client:
+        route = hotel_route(app.state.database)
+        page = client.get(f'/admin/routes/{route.id}', auth=AUTH).text
+        token = page.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+        data = {'csrf': token, 'name': route.name, 'match_field': route.match_field,
+                'match_value': route.match_value, 'recipients': '', 'subject_template': route.subject_template,
+                'email_template': route.email_template, 'enabled': '1'}
+        assert client.post(f'/admin/routes/{route.id}', auth=AUTH, data=data,
+                           follow_redirects=False).status_code == 303
+        assert app.state.database.get_route(route.id).recipients == ''
+        data['name'] = ''
+        assert client.post(f'/admin/routes/{route.id}', auth=AUTH, data=data).status_code == 422
