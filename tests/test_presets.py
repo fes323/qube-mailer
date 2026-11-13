@@ -46,7 +46,7 @@ def test_hand_made_route_is_kept(tmp_path):
     assert [route.name for route in db.get_routes()] == ['Мой']
 
 
-def test_hotel_request_goes_to_route_and_default_recipients_without_autoreply(tmp_path, monkeypatch):
+def test_hotel_request_staff_letters_and_guest_letter_with_pdf(tmp_path, monkeypatch):
     cfg, db = setup(tmp_path, monkeypatch)
     db.save_settings({'recipients': 'staff@qube-expo.ru, show.director@qube-expo.ru'})
     db.save_autoreply(None, rule_values(name='Все формы', match_field='*', match_value='*'))
@@ -54,8 +54,10 @@ def test_hotel_request_goes_to_route_and_default_recipients_without_autoreply(tm
     enqueue(db, cipher, 'event-hotel', dict(HOTEL_BOOKING_SAMPLE, tranid='qube-1'))
     asyncio.run(MailWorker(cfg, db, cipher)._process(db.claim_next(300, 600)))
 
-    # Route address first, then the defaults; the shared address gets one letter.
-    assert [to for to, _ in FakeSMTP.sent] == ['show.director@qube-expo.ru', 'staff@qube-expo.ru']
+    # Route address first, then the defaults; the shared address gets one letter; then the guest.
+    assert [to for to, _ in FakeSMTP.sent] == [
+        'show.director@qube-expo.ru', 'staff@qube-expo.ru', 'anna.smirnova@example.ru',
+    ]
     letter = FakeSMTP.sent[0][1]
     assert letter['Subject'] == 'QUBE EXPO · Бронирование гостиницы: Анна Смирнова'
     assert letter['Reply-To'] == 'anna.smirnova@example.ru'
@@ -63,18 +65,41 @@ def test_hotel_request_goes_to_route_and_default_recipients_without_autoreply(tm
     body = letter.get_body(('html',)).get_content()
     assert 'mailto:anna.smirnova@example.ru' in body and 'tel:+79160000000' in body
     assert 'Сообщение' in body and 'Яндекс Директ' in body
-    # The site already sent the hotel letter: the «all forms» autoreply stays silent.
-    kinds = {row['kind'] for row in db.history_page().rows}
-    assert kinds == {'notification'}
+
+    guest = FakeSMTP.sent[2][1]
+    assert guest['Subject'] == 'QUBE EXPO 2026: специальные условия бронирования в отелях-партнёрах'
+    assert guest['Reply-To'] == 'show.director@qube-expo.ru'
+    html_part = guest.get_body(('html',)).get_content()
+    for text in ('RADISSON BLU ОЛИМПИЙСКИЙ, МОСКВА', 'SOLUX HOTEL MOSCOW', '1 АРТ ОТЕЛЬ 4*', 'Юлия Игнатьева',
+                 'QUBE2026'):
+        assert text in html_part
+    assert '{%' not in html_part and '{{' not in html_part
+    attachments = list(guest.iter_attachments())
+    assert [part.get_filename() for part in attachments] == ['Qube_Expo_special_hotel_booking.pdf']
+    assert attachments[0].get_content().startswith(b'%PDF')
+    rows = db.history_page().rows
+    assert sorted(row['kind'] for row in rows) == ['autoreply', 'notification', 'notification']
+    assert {row['rule_name'] for row in rows if row['kind'] == 'autoreply'} == {'Бронирование гостиницы: письмо гостю'}
 
 
-def test_specific_autoreply_still_works_for_site_reply_forms(tmp_path, monkeypatch):
+def test_guest_autoreply_created_once(tmp_path):
+    db = Database(tmp_path / 'presets.db')
+    db.initialize()
+    rule = db.matching_autoreply({'form_route': 'hotel_booking'})
+    assert rule.sender_name == 'QUBE EXPO' and rule.enabled
+    assert [item.filename for item in db.get_attachments(rule.id)] == ['Qube_Expo_special_hotel_booking.pdf']
+    db.delete_autoreply(rule.id)
+    db.initialize()
+    assert db.matching_autoreply({'form_route': 'hotel_booking'}) is None
+
+
+def test_site_reply_forms_skip_the_fallback(tmp_path, monkeypatch):
     _, db = setup(tmp_path, monkeypatch)
     any_id = db.save_autoreply(None, rule_values(name='Все', match_field='*', match_value='*'))
     assert db.matching_autoreply({'form_route': 'program_pdf'}) is None
     assert db.matching_autoreply({'form_route': 'feedback'}).id == any_id
-    own = db.save_autoreply(None, rule_values(match_field='form_route', match_value='hotel_booking'))
-    assert db.matching_autoreply({'form_route': 'hotel_booking'}).id == own
+    own = db.save_autoreply(None, rule_values(match_field='form_route', match_value='program_pdf'))
+    assert db.matching_autoreply({'form_route': 'program_pdf'}).id == own
 
 
 def test_cms_blocks_escape_and_format():

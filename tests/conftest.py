@@ -7,3 +7,4 @@ def no_preset_routes(monkeypatch, request):
     if request.module.__name__.endswith("test_presets"):
         return
     monkeypatch.setattr("app.presets.PRESETS", {})
+    monkeypatch.setattr("app.presets.AUTOREPLY_PRESETS", {})

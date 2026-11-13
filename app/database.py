@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from app.presets import SITE_REPLY_ROUTES, seed_presets
+from app.presets import SITE_REPLY_ROUTES, seed_autoreplies, seed_presets
 from app.queue_crypto import EncryptedPayload
 
 DEFAULT_EMAIL_TEMPLATE = """\
@@ -302,6 +302,12 @@ class Database:
             os.chmod(self.path, 0o600)
         except OSError:
             pass
+        seed_autoreplies(self)
+
+    def set_flag(self, key: str) -> None:
+        """One-time markers (presets already created) kept beside the settings."""
+        with self._connect() as connection:
+            connection.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, '1')", (key,))
 
     @staticmethod
     def _create_autoreply_tables(connection: sqlite3.Connection) -> None:
