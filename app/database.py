@@ -161,6 +161,10 @@ AUTOREPLY_COLUMNS = (
 )
 
 
+# Lower is checked first; other (Tilda) fields keep their order after these.
+ROUTE_PRIORITY = {"formid": 0, "formname": 1, "form_route": 2}
+
+
 def _matches(match_field: str, match_value: str, fields: Mapping[str, Any]) -> bool:
     if match_field not in fields:
         return False
@@ -460,10 +464,40 @@ class Database:
         ]
 
     def matching_route(self, fields: Mapping[str, Any]) -> MailRoute | None:
-        for route in self.get_routes():
+        # A route for one form (formid) wins over a route for a form name or a whole form type.
+        routes = sorted(self.get_routes(), key=lambda route: (ROUTE_PRIORITY.get(route.match_field, 3), route.id))
+        for route in routes:
             if route.enabled and _matches(route.match_field, route.match_value, fields):
                 return route
         return None
+
+    def form_route_for(self, formid: str) -> MailRoute | None:
+        """The route made for exactly this form (match by formid), enabled or not."""
+        return next(
+            (route for route in self.get_routes() if route.match_field == "formid" and route.match_value == formid),
+            None,
+        )
+
+    def set_form_recipients(self, formid: str, *, name: str, recipients: str, include_default: bool) -> MailRoute:
+        """Recipients for one form, set from the CMS: keeps the route's letter, creates the route if needed."""
+        route = self.form_route_for(formid)
+        if route is None:
+            settings = self.get_settings()
+            self.create_route(
+                name=name[:100] or formid[:100], match_field="formid", match_value=formid,
+                recipients=recipients, subject_template=settings["subject_template"],
+                email_template=settings["email_template"], enabled=True, include_default=include_default,
+            )
+        else:
+            self.update_route(
+                route.id, name=route.name, match_field=route.match_field, match_value=route.match_value,
+                recipients=recipients, subject_template=route.subject_template,
+                email_template=route.email_template, enabled=True, sender_name=route.sender_name,
+                include_default=include_default,
+            )
+        found = self.form_route_for(formid)
+        assert found is not None
+        return found
 
     def get_route(self, route_id: int) -> MailRoute | None:
         return next((route for route in self.get_routes() if route.id == route_id), None)

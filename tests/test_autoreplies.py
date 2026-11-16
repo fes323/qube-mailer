@@ -315,3 +315,49 @@ def test_integration_key_validation(tmp_path):
         assert 'differ' in str(error)
     else:
         raise AssertionError('Reused key must be rejected')
+
+
+def test_cms_sets_recipients_of_one_form(tmp_path, monkeypatch):
+    cfg, _ = setup(tmp_path, monkeypatch)
+    app = create_app(cfg)
+    headers = {'Authorization': f'Bearer {API_KEY}'}
+    with TestClient(app) as client:
+        db = app.state.database
+        # A type route made earlier (lower id) must not shadow the route of one form.
+        db.create_route(name='Партнёры', match_field='form_route', match_value='partnership',
+                        recipients='pr@qube-expo.ru', subject_template='s', email_template='e', enabled=True)
+        url = '/api/v1/forms/qube-press-partnership-form-m/recipients'
+        assert client.put(url, json={'recipients': 'marketing@qube-expo.ru'}).status_code == 401
+        assert client.put(url, json={'recipients': 'bad'}, headers=headers).status_code == 422
+        assert client.put(url, json={'recipients': ''}, headers=headers).status_code == 422
+        result = client.put(url, headers=headers, json={
+            'recipients': 'marketing@qube-expo.ru; Marketing@qube-expo.ru', 'formname': 'Инф. партнёрство',
+        }).json()
+        route = result['route']
+        assert route['recipients'] == 'marketing@qube-expo.ru' and route['own'] and not route['include_default']
+        assert route['name'] == 'Инф. партнёрство'
+        fields = {'formid': 'qube-press-partnership-form-m', 'form_route': 'partnership'}
+        assert db.matching_route(fields).id == route['id']
+        assert db.matching_route({'formid': 'qube-other', 'form_route': 'partnership'}).name == 'Партнёры'
+
+        # A second save changes only the addresses: the letter edited in the mailer stays.
+        with db._connect() as connection:
+            connection.execute("UPDATE mail_routes SET subject_template='Своя тема' WHERE id=?", (route['id'],))
+        again = client.put(url, headers=headers, json={
+            'recipients': 'marketing@qube-expo.ru, pr@qube-expo.ru', 'include_default': True,
+        }).json()['route']
+        assert again['id'] == route['id'] and again['include_default']
+        assert again['recipients'] == 'marketing@qube-expo.ru, pr@qube-expo.ru'
+        assert db.get_route(route['id']).subject_template == 'Своя тема'
+
+        synced = client.put('/api/v1/forms', headers=headers, json={'forms': [
+            {'formid': 'qube-press-partnership-form-m', 'form_route': 'partnership'},
+            {'formid': 'qube-other', 'form_route': 'partnership'},
+        ]}).json()['forms']
+        assert synced[0]['route']['own'] and not synced[1]['route']['own']
+        assert synced[1]['route']['recipients'] == 'pr@qube-expo.ru'
+
+        assert client.delete(url, headers=headers).json() == {
+            'formid': 'qube-press-partnership-form-m', 'deleted': True}
+        assert db.matching_route(fields).name == 'Партнёры'
+        assert client.delete(url, headers=headers).json()['deleted'] is False

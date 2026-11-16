@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 
 from app.config import Config
 from app.database import CMS_FORMS_MAX_ENTRIES, HISTORY_KINDS, HISTORY_STATUSES, Database
-from app.mailer import MailWorker, valid_email
+from app.mailer import MailWorker, parse_recipients, valid_email
 from app.queue_crypto import QueueCipher
 
 MAX_JSON_BYTES = 1024 * 1024
@@ -49,13 +49,22 @@ def register_api(app: FastAPI, *, config: Config, database: Database, worker: Ma
             database.increment("unauthorized")
             raise HTTPException(status_code=401, detail="Invalid API key")
 
+    def route_info(route, formid: str) -> dict[str, Any]:
+        return {
+            "id": route.id, "name": route.name, "admin_path": f"/admin/routes/{route.id}",
+            "recipients": ", ".join(parse_recipients(route.recipients)) if route.recipients.strip() else "",
+            "include_default": route.include_default,
+            # True: the route is for this very form, so the CMS may change its recipients.
+            "own": route.match_field == "formid" and route.match_value == formid,
+        }
+
     def resolve(form: dict[str, str]) -> dict[str, Any]:
         fields = {key: form[key] for key in ("formid", "formname", "form_route") if form.get(key)}
         route = database.matching_route(fields)
         rule = database.matching_autoreply(fields)
         return {
             "formid": form["formid"],
-            "route": {"id": route.id, "name": route.name, "admin_path": f"/admin/routes/{route.id}"} if route else None,
+            "route": route_info(route, form["formid"]) if route else None,
             "autoreply": {
                 "id": rule.id, "name": rule.name, "any_form": rule.any_form,
                 "admin_path": f"/admin/autoreplies/{rule.id}",
@@ -93,6 +102,39 @@ def register_api(app: FastAPI, *, config: Config, database: Database, worker: Ma
             forms.append(form)
         database.replace_cms_forms(forms)
         return {"forms": [resolve(form) for form in forms], "synced": len(forms)}
+
+    @app.put("/api/v1/forms/{formid}/recipients", dependencies=[Depends(require_api)])
+    async def api_set_recipients(formid: str, request: Request) -> dict[str, Any]:
+        """Organisers' addresses for one form: a formid route, created or updated (its letter is kept)."""
+        payload = await _json(request)
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=422, detail="Expected an object")
+        formid = _clean(formid, FORM_LIMITS["formid"])
+        if not formid:
+            raise HTTPException(status_code=422, detail="formid is required")
+        raw = payload.get("recipients")
+        if not isinstance(raw, str) or len(raw) > 10_000:
+            raise HTTPException(status_code=422, detail="recipients must be a string")
+        try:
+            addresses = parse_recipients(raw)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from None
+        if any(not valid_email(address) for address in addresses):
+            raise HTTPException(status_code=422, detail="Invalid email")
+        route = database.set_form_recipients(
+            formid, name=_clean(payload.get("formname"), 100), recipients="\n".join(addresses),
+            include_default=payload.get("include_default") is True,
+        )
+        return {"formid": formid, "route": route_info(route, formid)}
+
+    @app.delete("/api/v1/forms/{formid}/recipients", dependencies=[Depends(require_api)])
+    async def api_clear_recipients(formid: str) -> dict[str, Any]:
+        """Drop the form's own route: its requests follow the type route or the default recipients again."""
+        formid = _clean(formid, FORM_LIMITS["formid"])
+        route = database.form_route_for(formid)
+        if route is not None:
+            database.delete_route(route.id)
+        return {"formid": formid, "deleted": route is not None}
 
     @app.get("/api/v1/autoreplies", dependencies=[Depends(require_api)])
     async def api_autoreplies() -> dict[str, Any]:
