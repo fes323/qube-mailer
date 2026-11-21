@@ -26,6 +26,11 @@ DEFAULT_EMAIL_TEMPLATE = """\
   </body>
 </html>
 """
+DEFAULT_CMS_EMAIL_TEMPLATE = DEFAULT_EMAIL_TEMPLATE.replace(
+    "{{ fields_table }}",
+    "{{ answers_table }}\n      <h2>Источник заявки</h2>\n      {{ source_table }}",
+)
+DEFAULT_CMS_SUBJECT = "Новая заявка — {{ formname }}"
 
 DEFAULT_SETTINGS = {
     "recipients": "",
@@ -447,57 +452,66 @@ class Database:
     def get_routes(self) -> list[MailRoute]:
         with self._connect() as connection:
             rows = connection.execute("SELECT * FROM mail_routes ORDER BY id").fetchall()
-        return [
-            MailRoute(
-                id=int(row["id"]),
-                name=row["name"],
-                match_field=row["match_field"],
-                match_value=row["match_value"],
-                recipients=row["recipients"],
-                subject_template=row["subject_template"],
-                email_template=row["email_template"],
-                enabled=bool(row["enabled"]),
-                sender_name=row["sender_name"],
-                include_default=bool(row["include_default"]),
-            )
-            for row in rows
-        ]
+        return [self._route(row) for row in rows]
+
+    @staticmethod
+    def _route(row: sqlite3.Row) -> MailRoute:
+        return MailRoute(
+            id=int(row["id"]),
+            name=row["name"],
+            match_field=row["match_field"],
+            match_value=row["match_value"],
+            recipients=row["recipients"],
+            subject_template=row["subject_template"],
+            email_template=row["email_template"],
+            enabled=bool(row["enabled"]),
+            sender_name=row["sender_name"],
+            include_default=bool(row["include_default"]),
+        )
 
     def matching_route(self, fields: Mapping[str, Any]) -> MailRoute | None:
+        return self._matching_route(fields, self._ordered_routes(self.get_routes()))
+
+    @staticmethod
+    def _ordered_routes(routes: list[MailRoute]) -> list[MailRoute]:
         # A route for one form (formid) wins over a route for a form name or a whole form type.
-        routes = sorted(self.get_routes(), key=lambda route: (ROUTE_PRIORITY.get(route.match_field, 3), route.id))
+        return sorted(routes, key=lambda route: (ROUTE_PRIORITY.get(route.match_field, 3), route.id))
+
+    @staticmethod
+    def _matching_route(fields: Mapping[str, Any], routes: list[MailRoute]) -> MailRoute | None:
         for route in routes:
             if route.enabled and _matches(route.match_field, route.match_value, fields):
                 return route
         return None
 
-    def form_route_for(self, formid: str) -> MailRoute | None:
-        """The route made for exactly this form (match by formid), enabled or not."""
-        return next(
-            (route for route in self.get_routes() if route.match_field == "formid" and route.match_value == formid),
-            None,
-        )
-
     def set_form_recipients(self, formid: str, *, name: str, recipients: str, include_default: bool) -> MailRoute:
         """Recipients for one form, set from the CMS: keeps the route's letter, creates the route if needed."""
-        route = self.form_route_for(formid)
-        if route is None:
-            settings = self.get_settings()
-            self.create_route(
-                name=name[:100] or formid[:100], match_field="formid", match_value=formid,
-                recipients=recipients, subject_template=settings["subject_template"],
-                email_template=settings["email_template"], enabled=True, include_default=include_default,
-            )
-        else:
-            self.update_route(
-                route.id, name=route.name, match_field=route.match_field, match_value=route.match_value,
-                recipients=recipients, subject_template=route.subject_template,
-                email_template=route.email_template, enabled=True, sender_name=route.sender_name,
-                include_default=include_default,
-            )
-        found = self.form_route_for(formid)
-        assert found is not None
-        return found
+        now = time.time()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                INSERT INTO mail_routes(
+                    name, match_field, match_value, recipients, subject_template,
+                    email_template, enabled, created_at, updated_at, include_default
+                ) VALUES (?, 'formid', ?, ?, ?, ?, 1, ?, ?, ?)
+                ON CONFLICT(match_field, match_value) DO UPDATE SET
+                    recipients=excluded.recipients, enabled=1, updated_at=excluded.updated_at,
+                    include_default=excluded.include_default
+                RETURNING *
+                """,
+                (
+                    name[:100] or formid[:100], formid, recipients,
+                    DEFAULT_CMS_SUBJECT, DEFAULT_CMS_EMAIL_TEMPLATE, now, now,
+                    int(include_default),
+                ),
+            ).fetchall()[0]
+        return self._route(row)
+
+    def delete_form_route(self, formid: str) -> bool:
+        with self._connect() as connection:
+            return connection.execute(
+                "DELETE FROM mail_routes WHERE match_field='formid' AND match_value=?", (formid,),
+            ).rowcount == 1
 
     def get_route(self, route_id: int) -> MailRoute | None:
         return next((route for route in self.get_routes() if route.id == route_id), None)
@@ -938,19 +952,36 @@ class Database:
         return self._autoreply(row) if row else None
 
     def matching_autoreply(self, fields: Mapping[str, Any]) -> Autoreply | None:
+        return self._matching_autoreply(fields, self._enabled_autoreplies())
+
+    def _enabled_autoreplies(self) -> list[Autoreply]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM autoreplies WHERE enabled=1 ORDER BY id").fetchall()
+        return [self._autoreply(row) for row in rows]
+
+    @staticmethod
+    def _matching_autoreply(fields: Mapping[str, Any], rules: list[Autoreply]) -> Autoreply | None:
         """A rule for this exact form wins; a rule for «all forms» is the fallback.
 
         The fallback skips forms whose submitter already gets a letter from the site itself.
         """
-        with self._connect() as connection:
-            rows = connection.execute("SELECT * FROM autoreplies WHERE enabled=1 ORDER BY id").fetchall()
-        rules = [self._autoreply(row) for row in rows]
         for rule in rules:
             if not rule.any_form and _matches(rule.match_field, rule.match_value, fields):
                 return rule
         if _matches_any("form_route", SITE_REPLY_ROUTES, fields):
             return None
         return next((rule for rule in rules if rule.any_form), None)
+
+    def match_forms(
+        self, forms: list[dict[str, str]], routes: list[MailRoute],
+    ) -> Iterator[tuple[MailRoute | None, Autoreply | None]]:
+        if not forms:
+            return
+        routes = self._ordered_routes(routes)
+        rules = self._enabled_autoreplies()
+        for form in forms:
+            fields = {key: form[key] for key in ("formid", "formname", "form_route") if form.get(key)}
+            yield self._matching_route(fields, routes), self._matching_autoreply(fields, rules)
 
     def save_autoreply(self, autoreply_id: int | None, values: Mapping[str, Any]) -> int:
         now = time.time()
@@ -1006,18 +1037,26 @@ class Database:
     def add_attachment(self, autoreply_id: int, filename: str, content_type: str, data: bytes) -> Attachment:
         digest = hashlib.sha256(data).hexdigest()
         target = self.attachment_path(digest)
-        if not target.exists():
-            self.attachments_dir.mkdir(parents=True, exist_ok=True)
-            temporary = target.with_name(f".{digest}.{os.getpid()}.tmp")
-            temporary.write_bytes(data)
-            os.replace(temporary, target)
-        now = time.time()
         with self._connect() as connection:
-            cursor = connection.execute(
-                "INSERT INTO autoreply_attachments(autoreply_id, filename, content_type, size, sha256, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (autoreply_id, filename, content_type, len(data), digest, now),
-            )
+            # Serialize the file write and its reference with attachment cleanup.
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                if not connection.execute("SELECT 1 FROM autoreplies WHERE id=?", (autoreply_id,)).fetchone():
+                    raise ValueError("Отбивка не найдена")
+                if not target.exists():
+                    self.attachments_dir.mkdir(parents=True, exist_ok=True)
+                    temporary = target.with_name(f".{digest}.{os.getpid()}.tmp")
+                    temporary.write_bytes(data)
+                    os.replace(temporary, target)
+                cursor = connection.execute(
+                    "INSERT INTO autoreply_attachments(autoreply_id, filename, content_type, size, sha256, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (autoreply_id, filename, content_type, len(data), digest, time.time()),
+                )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
         return Attachment(int(cursor.lastrowid), autoreply_id, filename, content_type, len(data), digest)
 
     def get_attachments(self, autoreply_id: int) -> list[Attachment]:
@@ -1052,6 +1091,7 @@ class Database:
     def purge_attachments(self, keep_seconds: int) -> int:
         """Forget removed attachments once no queued letter can still reference them."""
         cutoff = time.time() - keep_seconds
+        removed = 0
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
@@ -1069,17 +1109,16 @@ class Database:
                     row["sha256"]
                     for row in connection.execute("SELECT DISTINCT sha256 FROM autoreply_attachments")
                 }
+                for digest in candidates - in_use:
+                    try:
+                        self.attachment_path(digest).unlink()
+                        removed += 1
+                    except FileNotFoundError:
+                        pass
                 connection.execute("COMMIT")
             except Exception:
                 connection.execute("ROLLBACK")
                 raise
-        removed = 0
-        for digest in candidates - in_use:
-            try:
-                self.attachment_path(digest).unlink()
-                removed += 1
-            except FileNotFoundError:
-                pass
         return removed
 
     # --- Send history --------------------------------------------------------------

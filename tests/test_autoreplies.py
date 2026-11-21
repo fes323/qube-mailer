@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -67,6 +68,31 @@ def enqueue(db, cipher, event_id, fields):
     db.enqueue(event_id=event_id, dedupe_key=cipher.dedupe(fields, event_id),
                encrypted=cipher.encrypt(event_id, fields, datetime.now(UTC)), max_pending=10,
                retention_seconds=600, dedupe_retention_seconds=600)
+
+
+def test_organizer_mail_is_built_from_the_cms_field_snapshot(tmp_path, monkeypatch):
+    cfg, db = setup(tmp_path, monkeypatch)
+    db.set_form_recipients('qube-individual', name='Своя форма', recipients='staff@example.test', include_default=False)
+    cipher = QueueCipher(cfg.queue_keys, cfg.active_queue_key_version, cfg.queue_dedupe_key)
+    worker = MailWorker(cfg, db, cipher)
+    for event_id, formid in enumerate(('qube-standard', 'qube-individual')):
+        fields = {
+            'formid': formid, 'formname': 'Заявка на участие', 'utm_campaign': 'expo',
+            'Name': 'Анна', 'Area': '24',
+            'FormAnswers': json.dumps([
+                {'key': 'name', 'label': 'Ваше имя', 'value': 'Анна'},
+                {'key': 'task', 'label': 'Задача', 'value': '<материал>'},
+            ]),
+        }
+        enqueue(db, cipher, str(event_id), fields)
+        asyncio.run(worker._process(db.claim_next(300, 600)))
+    assert len(FakeSMTP.sent) == 2
+    for _, letter in FakeSMTP.sent:
+        assert letter['Subject'] == 'Новая заявка — Заявка на участие'
+        html = letter.get_body(('html',)).get_content()
+        assert html.index('Ваше имя') < html.index('Задача') < html.index('Площадь стенда')
+        assert html.count('Анна') == 1
+        assert '&lt;материал&gt;' in html and 'expo' in html and 'FormAnswers' not in html
 
 
 def csrf(client, url):
@@ -361,3 +387,25 @@ def test_cms_sets_recipients_of_one_form(tmp_path, monkeypatch):
             'formid': 'qube-press-partnership-form-m', 'deleted': True}
         assert db.matching_route(fields).name == 'Партнёры'
         assert client.delete(url, headers=headers).json()['deleted'] is False
+
+
+def test_concurrent_recipient_saves_share_one_route(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    cfg, _ = setup(tmp_path, monkeypatch)
+    db = create_app(cfg).state.database
+    ready = Barrier(2, timeout=5)
+
+    def save(address):
+        ready.wait()
+        return db.set_form_recipients(
+            'qube-form', name='Форма', recipients=address, include_default=False,
+        )
+
+    addresses = ['first@example.com', 'second@example.com']
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = pool.map(save, addresses)
+    assert first.id == second.id
+    assert [first.recipients, second.recipients] == addresses
+    assert db.get_route(first.id).recipients in addresses

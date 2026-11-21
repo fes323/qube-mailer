@@ -13,7 +13,14 @@ from typing import Any
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 
 from app.config import Config
-from app.database import CMS_FORMS_MAX_ENTRIES, HISTORY_KINDS, HISTORY_STATUSES, Database
+from app.database import (
+    CMS_FORMS_MAX_ENTRIES,
+    HISTORY_KINDS,
+    HISTORY_STATUSES,
+    Autoreply,
+    Database,
+    MailRoute,
+)
 from app.mailer import MailWorker, parse_recipients, valid_email
 from app.queue_crypto import QueueCipher
 
@@ -58,13 +65,10 @@ def register_api(app: FastAPI, *, config: Config, database: Database, worker: Ma
             "own": route.match_field == "formid" and route.match_value == formid,
         }
 
-    def resolve(form: dict[str, str]) -> dict[str, Any]:
-        fields = {key: form[key] for key in ("formid", "formname", "form_route") if form.get(key)}
-        route = database.matching_route(fields)
-        rule = database.matching_autoreply(fields)
+    def resolve(formid: str, route: MailRoute | None, rule: Autoreply | None) -> dict[str, Any]:
         return {
-            "formid": form["formid"],
-            "route": route_info(route, form["formid"]) if route else None,
+            "formid": formid,
+            "route": route_info(route, formid) if route else None,
             "autoreply": {
                 "id": rule.id, "name": rule.name, "any_form": rule.any_form,
                 "admin_path": f"/admin/autoreplies/{rule.id}",
@@ -101,7 +105,11 @@ def register_api(app: FastAPI, *, config: Config, database: Database, worker: Ma
             seen.add(form["formid"])
             forms.append(form)
         database.replace_cms_forms(forms)
-        return {"forms": [resolve(form) for form in forms], "synced": len(forms)}
+        matches = database.match_forms(forms, database.get_routes())
+        return {
+            "forms": [resolve(form["formid"], route, rule) for form, (route, rule) in zip(forms, matches, strict=True)],
+            "synced": len(forms),
+        }
 
     @app.put("/api/v1/forms/{formid}/recipients", dependencies=[Depends(require_api)])
     async def api_set_recipients(formid: str, request: Request) -> dict[str, Any]:
@@ -131,10 +139,7 @@ def register_api(app: FastAPI, *, config: Config, database: Database, worker: Ma
     async def api_clear_recipients(formid: str) -> dict[str, Any]:
         """Drop the form's own route: its requests follow the type route or the default recipients again."""
         formid = _clean(formid, FORM_LIMITS["formid"])
-        route = database.form_route_for(formid)
-        if route is not None:
-            database.delete_route(route.id)
-        return {"formid": formid, "deleted": route is not None}
+        return {"formid": formid, "deleted": database.delete_form_route(formid)}
 
     @app.get("/api/v1/autoreplies", dependencies=[Depends(require_api)])
     async def api_autoreplies() -> dict[str, Any]:

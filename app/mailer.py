@@ -16,7 +16,16 @@ from email.utils import formataddr, parseaddr
 from typing import Any
 
 from app.config import Config
-from app.database import Attachment, Autoreply, Database, OutboxItem
+from app.database import (
+    DEFAULT_CMS_EMAIL_TEMPLATE,
+    DEFAULT_CMS_SUBJECT,
+    DEFAULT_EMAIL_TEMPLATE,
+    DEFAULT_SETTINGS,
+    Attachment,
+    Autoreply,
+    Database,
+    OutboxItem,
+)
 from app.queue_crypto import QueueCipher
 from app.templating import html_to_text, render_html, render_subject, render_text
 
@@ -289,6 +298,12 @@ class MailWorker:
                     "route_name": route.name,
                 }
             )
+        fields = submission.fields
+        if str(fields.get("formid", "")).startswith("qube-"):
+            if settings["email_template"].strip() == DEFAULT_EMAIL_TEMPLATE.strip():
+                settings["email_template"] = DEFAULT_CMS_EMAIL_TEMPLATE
+            if fields.get("formname") and settings["subject_template"] == DEFAULT_SETTINGS["subject_template"]:
+                settings["subject_template"] = DEFAULT_CMS_SUBJECT
         return settings
 
     def _smtp(self) -> smtplib.SMTP:
