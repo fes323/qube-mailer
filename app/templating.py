@@ -3,9 +3,10 @@ from __future__ import annotations
 import html
 import json
 import re
-from datetime import date
-from html.parser import HTMLParser
 from collections.abc import Mapping
+from datetime import date
+from functools import cache
+from html.parser import HTMLParser
 from typing import Any
 
 PLACEHOLDER = re.compile(r"{{\s*([^\r\n{}]+?)\s*}}")
@@ -39,8 +40,15 @@ VALUE_STYLE = (
     "padding:10px 0;border-bottom:1px solid #e3e1ea;color:#111027;font-size:15px;line-height:22px;"
     "font-weight:bold;vertical-align:top;white-space:pre-wrap;word-break:break-word"
 )
-STANDARD_ANSWERS = (("Name", "Имя"), ("Company", "Компания"), ("Email", "Email"), ("Phone", "Телефон"),
-                    ("Comment", "Сообщение"))
+STANDARD_ANSWERS = (
+    ("Name", "Имя"), ("Company", "Компания"), ("Email", "Email"), ("Phone", "Телефон"),
+    ("Comment", "Сообщение"), ("Position", "Должность"), ("Site", "Сайт"),
+    ("Area", "Площадь стенда"), ("StandBuild", "Вариант застройки"), ("region", "Регион"),
+    ("arrival_date", "Дата прибытия"), ("arrival_time", "Время прибытия"),
+    ("arrival_place", "Место прибытия"), ("transfer", "Трансфер"), ("people", "Количество человек"),
+    ("need_hotel", "Нужен отель"), ("accommodation", "Размещение"), ("hotel_level", "Категория отеля"),
+    ("excursions", "Экскурсии"), ("places", "Места для посещения"),
+)
 SOURCE_FIELDS = (
     ("traffic_source", "Источник"), ("utm_source", "utm_source"), ("utm_medium", "utm_medium"),
     ("utm_campaign", "utm_campaign"), ("utm_content", "utm_content"), ("utm_term", "utm_term"),
@@ -81,16 +89,24 @@ def _rows(pairs: list[tuple[str, str]]) -> str:
 def answers_table(fields: Mapping[str, Any]) -> str:
     """The questions of a QUBE CMS form with their labels (FormAnswers), in the form's order."""
     pairs: list[tuple[str, str]] = []
+    seen: set[str] = set()
     try:
         answers = json.loads(str(fields.get("FormAnswers") or "[]"))
     except ValueError:
         answers = []
     for answer in answers if isinstance(answers, list) else []:
         if isinstance(answer, dict):
-            label = str(answer.get("label") or answer.get("key") or "")
-            pairs.append((label, _answer_text(answer.get("value"))))
-    if not pairs:
-        pairs = [(label, _answer_text(fields[key])) for key, label in STANDARD_ANSWERS if fields.get(key)]
+            key = str(answer.get("key") or "")
+            label = str(answer.get("label") or key)
+            if label:
+                pairs.append((label, _answer_text(answer.get("value"))))
+                seen.add(key.casefold())
+    pairs.extend(
+        (label, _answer_text(fields[key]))
+        for key, label in STANDARD_ANSWERS
+        if key.casefold() not in seen and fields.get(key) not in (None, "", [])
+        and ("stand_build" not in seen or key != "StandBuild")
+    )
     if fields.get("marketing_consent"):
         consent = "да" if str(fields["marketing_consent"]).strip() == "yes" else "нет"
         pairs.append(("Согласие на рекламную рассылку", consent))
@@ -149,12 +165,11 @@ def render_html(
     template: str, fields: Mapping[str, Any], received_at: str, *, show_missing: bool = False,
 ) -> str:
     """``show_missing`` renders unknown variables as [name]: used by previews only."""
-    special = {
-        "fields_table": fields_table(fields),
-        "received_at": html.escape(received_at),
-        "answers_table": answers_table(fields),
-        "source_table": source_table(fields),
-        "contact_buttons": contact_buttons(fields),
+    formatters = {
+        "fields_table": fields_table,
+        "answers_table": answers_table,
+        "source_table": source_table,
+        "contact_buttons": contact_buttons,
     }
 
     def value(key: str) -> str:
@@ -162,15 +177,17 @@ def render_html(
             return html.escape(f"[{key}]")
         return html.escape(_display_value(fields.get(key, "")))
 
-    def replace(match: re.Match[str]) -> str:
-        key = match.group(1).strip()
+    @cache
+    def resolve(key: str) -> str:
         if key.startswith("field:"):
             return value(key.removeprefix("field:").strip())
-        if key in special:
-            return special[key]
+        if key == "received_at":
+            return html.escape(received_at)
+        if key in formatters:
+            return formatters[key](fields)
         return value(key)
 
-    return PLACEHOLDER.sub(replace, template)
+    return PLACEHOLDER.sub(lambda match: resolve(match.group(1).strip()), template)
 
 
 def render_subject(template: str, fields: Mapping[str, Any]) -> str:

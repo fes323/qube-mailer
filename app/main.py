@@ -216,12 +216,12 @@ def create_app(config: Config | None = None) -> FastAPI:
     @app.get("/admin/routes", response_class=HTMLResponse)
     async def routes_page(request: Request, _: str = Depends(require_admin)):
         cms_forms = database.cms_forms()
-        for form in cms_forms:
-            fields = {key: form[key] for key in ("formid", "formname", "form_route") if form[key]}
-            form["route"] = database.matching_route(fields)
-            form["autoreply"] = database.matching_autoreply(fields)
+        routes = database.get_routes()
+        for form, (route, rule) in zip(cms_forms, database.match_forms(cms_forms, routes), strict=True):
+            form["route"] = route
+            form["autoreply"] = rule
         return templates.TemplateResponse(request=request, name="routes.html", context={
-            "routes": database.get_routes(), "field_catalog": database.field_catalog(),
+            "routes": routes, "field_catalog": database.field_catalog(),
             "saved": request.query_params.get("saved") == "1", "cms_forms": cms_forms,
         })
 
